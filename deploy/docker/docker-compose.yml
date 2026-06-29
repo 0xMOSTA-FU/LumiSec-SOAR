@@ -1,0 +1,190 @@
+# ============================================================================
+# CyberSOAR — docker-compose for local + staging
+# ============================================================================
+# Spins up:
+#   - MongoDB replica set (required for transactions)
+#   - SOAR web app (Next.js)
+#   - SOAR backend (Node.js + Express, mini-services/soar-backend)
+#   - Redis (for future queue + cache layer)
+#
+# Usage:
+#   docker compose -f deploy/docker/docker-compose.yml up -d
+#
+# Production notes:
+#   - Replace self-signed certs with real ones (or terminate TLS at ingress)
+#   - Set MONGODB_URI to a managed Atlas/DocumentDB instance for HA
+#   - Add Prometheus + Grafana containers (or scrape from external)
+# ============================================================================
+
+services:
+  mongo:
+    image: mongo:7-jammy
+    container_name: soar-mongo
+    restart: unless-stopped
+    command: ["--replSet", "rs0", "--bind_ip_all", "--port", "27017"]
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: ${MONGO_USER:-soar}
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_PASS:-soar_dev_password_change_me}
+      MONGO_INITDB_DATABASE: soar
+    ports:
+      - "27017:27017"
+    volumes:
+      - soar-mongo-data:/data/db
+      - ./mongo-init.js:/docker-entrypoint-initdb.d/init.js:ro
+    healthcheck:
+      test: |
+        mongosh --quiet --eval "
+          try {
+            const r = rs.status();
+            if (r.ok === 1) quit(0);
+            quit(1);
+          } catch(e) { quit(1); }
+        "
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    networks: [soar-net]
+
+  # One-shot container that initializes the replica set on first boot
+  mongo-init:
+    image: mongo:7-jammy
+    container_name: soar-mongo-init
+    depends_on:
+      mongo:
+        condition: service_healthy
+    restart: "no"
+    entrypoint: |
+      mongosh mongodb://soar:soar_dev_password_change_me@mongo:27017/admin --eval "
+        const cfg = {
+          _id: 'rs0',
+          members: [{ _id: 0, host: 'mongo:27017', priority: 1 }]
+        };
+        try { rs.initiate(cfg); } catch(e) { print(e.message); }
+        while (true) {
+          try {
+            const s = rs.status();
+            if (s.myState === 1) { print('Replica set ready'); break; }
+          } catch(e) {}
+          sleep(1000);
+        }
+      "
+    networks: [soar-net]
+
+  redis:
+    image: redis:7-alpine
+    container_name: soar-redis
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes", "--maxmemory", "256mb", "--maxmemory-policy", "allkeys-lru"]
+    ports:
+      - "6379:6379"
+    volumes:
+      - soar-redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    networks: [soar-net]
+
+  soar-web:
+    build:
+      context: ../..
+      dockerfile: deploy/docker/Dockerfile
+    container_name: soar-web
+    restart: unless-stopped
+    depends_on:
+      mongo:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      # SECURITY: hard-disable dev auth bypass in all deployment artifacts.
+      SOAR_DISABLE_DEV_AUTH: "1"
+      SOAR_ENABLE_DEV_AUTH: "0"
+      PORT: 3000
+      HOSTNAME: 0.0.0.0
+      MONGODB_URI: mongodb://soar:soar_dev_password_change_me@mongo:27017/soar?replicaSet=rs0&authSource=admin
+      MONGODB_DB: soar
+      REDIS_URL: redis://redis:6379
+      WEBHOOK_SECRET: ${WEBHOOK_SECRET:-change_me_in_prod}
+      LOG_LEVEL: info
+      NEXTAUTH_URL: ${NEXTAUTH_URL:-http://localhost:3000}
+      NEXTAUTH_SECRET: ${NEXTAUTH_SECRET:-change_me_in_prod_please}
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY:-}
+    ports:
+      - "3000:3000"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3000/api/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    networks: [soar-net]
+
+  soar-backend:
+    build:
+      context: ../..
+      dockerfile: mini-services/soar-backend/Dockerfile
+    container_name: soar-backend
+    restart: unless-stopped
+    depends_on:
+      mongo:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      PORT: 4000
+      MONGODB_URI: mongodb://soar:soar_dev_password_change_me@mongo:27017/soar?replicaSet=rs0&authSource=admin
+      JWT_SECRET: ${JWT_SECRET:-change_me_in_prod}
+    ports:
+      - "4000:4000"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:4000/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    networks: [soar-net]
+
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: soar-prometheus
+    restart: unless-stopped
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - soar-prometheus-data:/prometheus
+    ports:
+      - "9090:9090"
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--storage.tsdb.retention.time=30d'
+      - '--web.enable-lifecycle'
+    networks: [soar-net]
+
+  grafana:
+    image: grafana/grafana:latest
+    container_name: soar-grafana
+    restart: unless-stopped
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASS:-admin}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    volumes:
+      - soar-grafana-data:/var/lib/grafana
+      - ./grafana-datasources.yml:/etc/grafana/provisioning/datasources/datasources.yml:ro
+    ports:
+      - "3001:3000"
+    depends_on:
+      - prometheus
+    networks: [soar-net]
+
+volumes:
+  soar-mongo-data:
+  soar-redis-data:
+  soar-prometheus-data:
+  soar-grafana-data:
+
+networks:
+  soar-net:
+    driver: bridge

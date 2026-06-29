@@ -1,0 +1,564 @@
+// SOAR Platform — Enterprise Prisma Schema
+// Designed for PostgreSQL 16 (production). SQLite-compatible for local dev.
+// All sensitive fields (Integration.config) are encrypted at the application layer
+// via AES-256-GCM (see src/lib/crypto.ts) before being written to this DB.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  // Production: provider = "postgresql", DATABASE_URL=postgresql://...
+  // Dev (this repo): provider = "sqlite", DATABASE_URL=file:./dev.db
+  // The schema is portable — Json fields work on both. Row-level security
+  // (multi-tenant MSSP mode) is only enforced in PostgreSQL; in SQLite we
+  // enforce tenantId in the application layer.
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// ============================================================================
+// IDENTITY & ACCESS
+// ============================================================================
+
+model Tenant {
+  id          String   @id @default(cuid())
+  name        String   @unique
+  slug        String   @unique
+  status      String   @default("active") // active | suspended | deleted
+  settings    String     @default("{}")
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  users       User[]
+  cases       Case[]
+  workflows   Workflow[]
+  alerts      Alert[]
+  integrations Integration[]
+  auditLogs   AuditLog[]
+  apiKeys     ApiKey[]
+
+  @@index([status])
+}
+
+model User {
+  id            String   @id @default(cuid())
+  tenantId      String
+  tenant        Tenant   @relation(fields: [tenantId], references: [id])
+  email         String   @unique
+  username      String   @unique
+  fullName      String
+  passwordHash  String?  // null if SSO-only
+  mfaSecret     String?  // encrypted TOTP secret
+  mfaEnabled    Boolean  @default(false)
+  webauthnCreds String     @default("[]")
+  status        String   @default("active") // active | locked | disabled
+  lastLoginAt   DateTime?
+  lastLoginIp   String?
+  failedAttempts Int     @default(0)
+  lockedUntil   DateTime?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  userRoles     UserRole[]
+  auditLogs     AuditLog[]
+  apiKeys       ApiKey[]
+  approvals     Approval[]
+  assignedCases Case[]   @relation("CaseAssignee")
+  assignedAlerts Alert[] @relation("AlertAssignee")
+
+  @@index([tenantId])
+  @@index([status])
+}
+
+model Role {
+  id          String   @id @default(cuid())
+  name        String   @unique
+  description String?
+  isSystem    Boolean  @default(false) // system roles cannot be deleted
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  users       UserRole[]
+  permissions RolePermission[]
+}
+
+model Permission {
+  id          String   @id @default(cuid())
+  name        String   @unique
+  description String?
+  resource    String   // e.g. "case", "workflow", "integration"
+  action      String   // e.g. "read", "write", "execute", "delete"
+  createdAt   DateTime @default(now())
+
+  roles       RolePermission[]
+}
+
+model UserRole {
+  userId String
+  roleId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role   Role   @relation(fields: [roleId], references: [id])
+  assignedAt DateTime @default(now())
+  assignedBy String?
+
+  @@id([userId, roleId])
+}
+
+model RolePermission {
+  roleId       String
+  permissionId String
+  role         Role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  permission   Permission @relation(fields: [permissionId], references: [id])
+  conditions   String       @default("{}") // ABAC conditions
+
+  @@id([roleId, permissionId])
+}
+
+model ApiKey {
+  id          String   @id @default(cuid())
+  tenantId    String
+  tenant      Tenant   @relation(fields: [tenantId], references: [id])
+  userId      String
+  user        User     @relation(fields: [userId], references: [id])
+  name        String
+  keyHash     String   @unique // bcrypt-hashed
+  keyPrefix   String   // first 8 chars for identification
+  scopes      String     @default("[]") // ["case:read", "workflow:execute"]
+  expiresAt   DateTime?
+  lastUsedAt  DateTime?
+  lastUsedIp  String?
+  createdAt   DateTime @default(now())
+  revokedAt   DateTime?
+
+  @@index([tenantId])
+  @@index([keyPrefix])
+}
+
+// ============================================================================
+// AUDIT LOG (tamper-evident via hash chain)
+// ============================================================================
+
+model AuditLog {
+  id          String   @id @default(cuid())
+  tenantId    String?
+  tenant      Tenant?  @relation(fields: [tenantId], references: [id])
+  userId      String?
+  user        User?    @relation(fields: [userId], references: [id])
+  actor       String   // user email or "system" or "api-key:xxx"
+  actorIp     String?
+  actorType   String   // user | system | api-key | webhook
+  action      String   // e.g. "case.create", "workflow.execute", "integration.update"
+  resource    String   // e.g. "case", "workflow"
+  resourceId  String?
+  description String
+  before      Json?    // state before mutation (for updates)
+  after       Json?    // state after mutation
+  metadata    String     @default("{}")
+  hash        String   @unique // SHA-256(prev_hash + canonical_json(this))
+  prevHash    String?
+  requestId   String?
+  createdAt   DateTime @default(now())
+
+  @@index([tenantId, createdAt])
+  @@index([userId])
+  @@index([action])
+  @@index([resource, resourceId])
+}
+
+// ============================================================================
+// APPROVAL WORKFLOWS
+// ============================================================================
+
+model Approval {
+  id           String   @id @default(cuid())
+  tenantId     String?
+  workflowExecutionId String?
+  workflowExecution WorkflowExecution? @relation(fields: [workflowExecutionId], references: [id])
+  caseId       String?
+  case         Case?    @relation(fields: [caseId], references: [id])
+  requestedBy  String
+  user         User?    @relation(fields: [requestedBy], references: [id])
+  action       String   // e.g. "block_ip", "isolate_host", "disable_user"
+  targetType   String   // ip | host | user | domain | hash
+  targetValue  String
+  reason       String
+  status       String   @default("pending") // pending | approved | rejected | expired | executed
+  riskLevel    String   @default("medium") // low | medium | high | critical
+  approvedBy   String?
+  approvedAt   DateTime?
+  rejectedBy   String?
+  rejectedAt   DateTime?
+  rejectionReason String?
+  expiresAt    DateTime?
+  executedAt   DateTime?
+  executionResult Json?
+  metadata     String     @default("{}")
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  steps        ApprovalStep[]
+
+  @@index([status])
+  @@index([tenantId])
+  @@index([requestedBy])
+}
+
+model ApprovalStep {
+  id          String   @id @default(cuid())
+  approvalId  String
+  approval    Approval @relation(fields: [approvalId], references: [id], onDelete: Cascade)
+  stepNumber  Int
+  approverRole String  // e.g. "admin", "ciso"
+  approverId  String?
+  status      String   @default("pending") // pending | approved | rejected
+  decision    String?
+  decidedAt   DateTime?
+  comment     String?
+  createdAt   DateTime @default(now())
+
+  @@index([approvalId])
+}
+
+// ============================================================================
+// EVIDENCE & CHAIN OF CUSTODY
+// ============================================================================
+
+model Evidence {
+  id           String   @id @default(cuid())
+  tenantId     String?
+  caseId       String?
+  case         Case?    @relation(fields: [caseId], references: [id])
+  filename     String
+  filePath     String   // S3 key
+  fileSize     Int
+  fileHash     String   // SHA-256
+  mimeType     String
+  collectedBy  String
+  collectedAt  DateTime @default(now())
+  source       String   // edr | siem | manual | workflow
+  description  String?
+  metadata     String     @default("{}")
+  chainOfCustody Json   @default("[]") // [{actor, action, timestamp, hash}]
+
+  @@index([caseId])
+  @@index([fileHash])
+}
+
+// ============================================================================
+// MITRE ATT&CK
+// ============================================================================
+
+model AttackPattern {
+  id           String   @id @default(cuid())
+  techniqueId  String   @unique // e.g. "T1486"
+  name         String
+  description  String?
+  tactic       String   // e.g. "impact"
+  subTechnique String?
+  platforms    String     @default("[]")
+  dataSources  String     @default("[]")
+  url          String?
+  createdAt    DateTime @default(now())
+
+  cases        CaseAttackPattern[]
+  alerts       AlertAttackPattern[]
+}
+
+// ============================================================================
+// WORKFLOWS & EXECUTIONS
+// ============================================================================
+
+model Workflow {
+  id          String   @id @default(cuid())
+  tenantId    String?
+  tenant      Tenant?  @relation(fields: [tenantId], references: [id])
+  name        String
+  description String?
+  status      String   @default("draft") // draft | active | paused | archived
+  version     Int      @default(1)
+  yaml        String?  // optional YAML playbook source
+  nodes       String   @default("[]")
+  edges       String   @default("[]")
+  trigger     String   @default("{}")
+  tags        String   @default("[]")
+  requiresApproval Boolean @default(false)
+  maxExecutionsPerHour Int @default(100)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  executions  WorkflowExecution[]
+  cases       Case[]
+
+  @@index([tenantId])
+  @@index([status])
+}
+
+model WorkflowExecution {
+  id         String   @id @default(cuid())
+  tenantId   String?
+  workflowId String
+  workflow   Workflow @relation(fields: [workflowId], references: [id])
+  status     String   @default("running") // running | success | failed | paused | cancelled | awaiting_approval
+  trigger    String   @default("{}")
+  triggerType String  @default("manual") // manual | webhook | schedule | alert | api
+  result     String   @default("{}")
+  logs       String   @default("[]")
+  requestId  String?
+  startedBy  String?
+  startedAt  DateTime @default(now())
+  endedAt    DateTime?
+  durationMs Int?
+
+  approvals  Approval[]
+
+  @@index([workflowId])
+  @@index([status])
+  @@index([startedAt])
+}
+
+// ============================================================================
+// CASES & ALERTS
+// ============================================================================
+
+model Case {
+  id          String   @id @default(cuid())
+  tenantId    String?
+  tenant      Tenant?  @relation(fields: [tenantId], references: [id])
+  title       String
+  description String?
+  severity    String   @default("medium") // low | medium | high | critical
+  status      String   @default("open") // open | investigating | contained | resolved | closed
+  priority    String   @default("p3") // p1 | p2 | p3 | p4
+  assigneeId  String?
+  assignee    User?    @relation("CaseAssignee", fields: [assigneeId], references: [id])
+  workflowId  String?
+  workflow    Workflow? @relation(fields: [workflowId], references: [id])
+  sla         Int?     // minutes
+  slaDueAt    DateTime?
+  tags        String   @default("[]")
+  artifacts   String   @default("[]")
+  timeline    String   @default("[]")
+  closedAt    DateTime?
+  closedBy    String?
+  resolution  String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  alerts      Alert[]
+  evidence    Evidence[]
+  attackPatterns CaseAttackPattern[]
+  approvals   Approval[]
+
+  @@index([tenantId])
+  @@index([status])
+  @@index([severity])
+  @@index([assigneeId])
+}
+
+model CaseAttackPattern {
+  caseId         String
+  attackPatternId String
+  case           Case          @relation(fields: [caseId], references: [id], onDelete: Cascade)
+  attackPattern  AttackPattern @relation(fields: [attackPatternId], references: [id])
+  confidence     Float         @default(0.5)
+  mappedBy       String?
+  mappedAt       DateTime      @default(now())
+
+  @@id([caseId, attackPatternId])
+}
+
+model Alert {
+  id          String   @id @default(cuid())
+  tenantId    String?
+  tenant      Tenant?  @relation(fields: [tenantId], references: [id])
+  title       String
+  description String?
+  source      String   // splunk | sentinel | wazuh | email | webhook | manual
+  sourceId    String?  // ID in source system
+  severity    String   @default("medium")
+  status      String   @default("new") // new | triaging | investigating | escalated | closed | false_positive
+  confidence  Float    @default(0.5)
+  assigneeId  String?
+  assignee    User?    @relation("AlertAssignee", fields: [assigneeId], references: [id])
+  caseId      String?
+  case        Case?    @relation(fields: [caseId], references: [id])
+  raw         String   @default("{}")
+  iocs        String   @default("[]") // [{type, value}]
+  dedupKey    String?  // for deduplication
+  firstSeenAt DateTime @default(now())
+  lastSeenAt  DateTime @default(now())
+  occurrenceCount Int  @default(1)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  attackPatterns AlertAttackPattern[]
+
+  @@index([tenantId])
+  @@index([status])
+  @@index([severity])
+  @@index([caseId])
+  @@index([dedupKey])
+  @@index([source, sourceId])
+}
+
+model AlertAttackPattern {
+  alertId         String
+  attackPatternId String
+  alert           Alert          @relation(fields: [alertId], references: [id], onDelete: Cascade)
+  attackPattern   AttackPattern  @relation(fields: [attackPatternId], references: [id])
+  confidence      Float          @default(0.5)
+  mappedAt        DateTime       @default(now())
+
+  @@id([alertId, attackPatternId])
+}
+
+// ============================================================================
+// INTEGRATIONS (config field is AES-256-GCM encrypted)
+// ============================================================================
+
+model Integration {
+  id          String   @id @default(cuid())
+  tenantId    String?
+  tenant      Tenant?  @relation(fields: [tenantId], references: [id])
+  name        String
+  type        String   // virustotal | abuseipdb | splunk | etc.
+  category    String   @default("security")
+  description String?
+  config      String   @default("{}") // ENCRYPTED JSON
+  status      String   @default("disconnected") // connected | disconnected | error | testing
+  icon        String   @default("shield")
+  lastTestedAt DateTime?
+  lastTestResult Json?
+  rateLimitPerMin Int?
+  timeoutMs   Int      @default(30000)
+  retryCount  Int      @default(3)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  connectorCalls ConnectorCall[]
+
+  @@index([tenantId])
+  @@index([type])
+  @@index([status])
+}
+
+model ConnectorCall {
+  id             String   @id @default(cuid())
+  integrationId  String
+  integration    Integration @relation(fields: [integrationId], references: [id], onDelete: Cascade)
+  workflowExecutionId String?
+  nodeId         String?
+  action         String
+  requestMethod  String
+  requestUrl     String
+  requestHeaders Json?  // sensitive headers redacted
+  requestBody    Json?
+  responseStatus Int?
+  responseBody   Json?
+  durationMs     Int
+  success        Boolean
+  errorCode      String?
+  errorMessage   String?
+  retryAttempt   Int     @default(0)
+  requestId      String?
+  createdAt      DateTime @default(now())
+
+  @@index([integrationId, createdAt])
+  @@index([success])
+  @@index([workflowExecutionId])
+}
+
+// ============================================================================
+// PLAYBOOKS
+// ============================================================================
+
+model Playbook {
+  id          String   @id @default(cuid())
+  tenantId    String?
+  name        String
+  description String?
+  category    String   @default("incident_response")
+  steps       String   @default("[]")
+  triggers    String   @default("[]")
+  status      String   @default("active")
+  version     Int      @default(1)
+  tags        String   @default("[]")
+  yaml        String?
+  // Link a playbook to an executable workflow. When set, the "Run Playbook"
+  // button on the playbooks page executes this workflow with the playbook's
+  // default trigger payload. When null, the playbook is a documentation-only
+  // procedure (steps are shown but cannot be auto-executed).
+  workflowId  String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([status])
+  @@index([category])
+  @@index([workflowId])
+}
+
+// ============================================================================
+// SOAR GATEWAY MODELS (local /api/soar/* — maps to UI contract)
+// ============================================================================
+
+model VaultSecret {
+  id          String   @id @default(cuid())
+  tenantId    String?
+  name        String
+  type        String   @default("api_key")
+  description String?
+  valueEnc    String   // AES-256-GCM encrypted
+  lastUsedAt  DateTime?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([tenantId])
+  @@index([type])
+}
+
+model SoarArtifact {
+  id          String   @id @default(cuid())
+  tenantId    String?
+  incidentId  String?  // Case.id
+  type        String   // ip | hash | domain | url | file
+  value       String
+  description String?
+  tlp         String   @default("amber")
+  enriched    Boolean  @default(false)
+  enrichment  String   @default("{}")
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([tenantId])
+  @@index([incidentId])
+  @@index([type, value])
+}
+
+model SoarNotification {
+  id        String   @id @default(cuid())
+  tenantId  String?
+  userId    String?
+  title     String
+  message   String
+  read      Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  @@index([tenantId])
+  @@index([userId, read])
+}
+
+model WebhookSource {
+  id          String   @id @default(cuid())
+  tenantId    String?
+  name        String
+  slug        String   @unique
+  secret      String?
+  workflowId  String?
+  enabled     Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([tenantId])
+  @@index([workflowId])
+}

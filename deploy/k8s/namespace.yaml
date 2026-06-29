@@ -1,0 +1,10 @@
+# CyberSOAR — Kubernetes Namespace
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: soar
+  labels:
+    app.kubernetes.io/part-of: cybersoar
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/audit: restricted
+    pod-security.kubernetes.io/warn: restricted

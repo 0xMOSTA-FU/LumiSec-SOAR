@@ -1,0 +1,52 @@
+{{- /*
+# CyberSOAR — NOTES.txt — post-install instructions printed by `helm install`
+*/ -}}
+==========================================================================
+  CyberSOAR {{ .Chart.AppVersion }} deployed to namespace {{ .Release.Namespace }}
+==========================================================================
+
+Release: {{ .Release.Name }}
+
+1. Wait for pods to become Ready:
+   kubectl -n {{ .Release.Namespace }} rollout status deployment/{{ .Release.Name }}-web
+   kubectl -n {{ .Release.Namespace }} get pods -l app.kubernetes.io/instance={{ .Release.Name }}
+
+2. Get the application URL:
+{{- if .Values.web.ingress.enabled }}
+   {{ if .Values.web.ingress.tls.enabled }}https{{ else }}http{{ end }}://{{ .Values.web.ingress.host }}
+   Webhook endpoint: {{ if .Values.web.ingress.tls.enabled }}https{{ else }}http{{ end }}://{{ .Values.web.ingress.webhookHost }}{{ .Values.web.ingress.webhookPath | default "/api/webhook" }}
+{{- else }}
+   kubectl -n {{ .Release.Namespace }} port-forward svc/{{ .Release.Name }}-web 8080:80
+   Then open: http://localhost:8080
+{{- end }}
+
+3. Verify health endpoints:
+   curl -s {{ if .Values.web.ingress.tls.enabled }}https{{ else }}http{{ end }}://{{ .Values.web.ingress.host }}/api/health | jq
+   curl -s {{ if .Values.web.ingress.tls.enabled }}https{{ else }}http{{ end }}://{{ .Values.web.ingress.host }}/api/metrics | head -20
+
+4. Secrets (rotate IMMEDIATELY in production):
+   kubectl -n {{ .Release.Namespace }} get secret {{ .Release.Name }}-secrets -o jsonpath='{.data}' | jq
+   Recommended: replace with ExternalSecrets + Vault for production.
+
+5. MongoDB connection:
+   kubectl -n {{ .Release.Namespace }} get pods -l app.kubernetes.io/name=mongodb
+   Mongo URI is in the {{ .Release.Name }}-secrets secret under key `mongodb-uri`.
+
+6. Observability:
+   - Prometheus:        kubectl -n {{ .Release.Namespace }} port-forward svc/{{ .Release.Name }}-prometheus 9090
+   - Grafana:           kubectl -n {{ .Release.Namespace }} port-forward svc/{{ .Release.Name }}-grafana 3000:80
+
+7. Tail logs:
+   kubectl -n {{ .Release.Namespace }} logs -l app.kubernetes.io/component=web -f --tail=200
+
+==========================================================================
+  ⚠️  CRITICAL SECURITY CHECKS (do before going live)
+==========================================================================
+  [ ] Rotate ALL secrets (mongodb-uri, redis-url, encryption-key, jwt-secret)
+  [ ] Enable Pod Security Admission (restricted profile is already set)
+  [ ] Configure NetworkPolicy exceptions only for trusted namespaces
+  [ ] Verify Ingress TLS uses a real CA (Let's Encrypt or internal PKI)
+  [ ] Enable audit log shipping to immutable storage (S3 Object Lock)
+  [ ] Configure backup schedule for MongoDB (Velero or pgdump equivalent)
+  [ ] Verify Prometheus retention matches compliance requirements
+==========================================================================

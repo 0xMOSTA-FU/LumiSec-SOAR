@@ -1,0 +1,29 @@
+# Helm chart ignore patterns
+
+# Local environment values (NEVER commit real secrets)
+values-local.yaml
+values-dev.yaml
+
+# Source code & build artifacts
+*.tgz
+*.tar.gz
+node_modules/
+.next/
+.git/
+.gitignore
+
+# Documentation (not bundled in chart)
+*.md
+docs/
+
+# Tests
+tests/
+*.test.ts
+vitest.config.ts
+
+# OS / editor noise
+.DS_Store
+Thumbs.db
+*.swp
+.idea/
+.vscode/

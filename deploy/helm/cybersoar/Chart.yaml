@@ -1,0 +1,28 @@
+apiVersion: v2
+name: cybersoar
+description: CyberSOAR — Production-grade Security Orchestration, Automation & Response platform
+type: application
+version: 1.0.0
+appVersion: "2.0.0"
+home: https://github.com/cybersoar/platform
+sources:
+  - https://github.com/cybersoar/platform
+maintainers:
+  - name: CyberSOAR Team
+    email: dev@cybersoar.io
+keywords:
+  - security
+  - soar
+  - soc
+  - automation
+  - incident-response
+  - threat-intel
+dependencies:
+  - name: mongodb
+    version: "15.x.x"
+    repository: "https://charts.bitnami.com/bitnami"
+    condition: mongodb.enabled
+  - name: redis
+    version: "20.x.x"
+    repository: "https://charts.bitnami.com/bitnami"
+    condition: redis.enabled

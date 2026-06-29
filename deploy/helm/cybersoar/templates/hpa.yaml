@@ -1,0 +1,76 @@
+{{- /*
+# CyberSOAR — HorizontalPodAutoscaler (Helm template)
+# Scales web pods based on CPU + memory + custom active_executions metric.
+*/ -}}
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: {{ .Release.Name }}-web
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: cybersoar
+    app.kubernetes.io/instance: {{ .Release.Name }}
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: {{ .Release.Name }}-web
+  minReplicas: {{ .Values.web.minReplicas }}
+  maxReplicas: {{ .Values.web.maxReplicas }}
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: {{ .Values.web.hpa.cpuUtilization }}
+    - type: Resource
+      resource:
+        name: memory
+        target:
+          type: Utilization
+          averageUtilization: {{ .Values.web.hpa.memoryUtilization }}
+    {{- if .Values.web.hpa.activeExecutionsPerPod }}
+    - type: Pods
+      pods:
+        metric:
+          name: soar_active_executions
+        target:
+          type: AverageValue
+          averageValue: "{{ .Values.web.hpa.activeExecutionsPerPod }}"
+    {{- end }}
+  behavior:
+    scaleUp:
+      stabilizationWindowSeconds: 30
+      policies:
+        - type: Percent
+          value: 100
+          periodSeconds: 30
+    scaleDown:
+      stabilizationWindowSeconds: 300
+      policies:
+        - type: Percent
+          value: 50
+          periodSeconds: 60
+---
+{{- if .Values.web.podDisruptionBudget.enabled }}
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ .Release.Name }}-web
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: cybersoar
+    app.kubernetes.io/instance: {{ .Release.Name }}
+spec:
+  {{- if .Values.web.podDisruptionBudget.minAvailable }}
+  minAvailable: {{ .Values.web.podDisruptionBudget.minAvailable }}
+  {{- else }}
+  maxUnavailable: {{ .Values.web.podDisruptionBudget.maxUnavailable | default 1 }}
+  {{- end }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: cybersoar
+      app.kubernetes.io/instance: {{ .Release.Name }}
+      app.kubernetes.io/component: web
+{{- end }}

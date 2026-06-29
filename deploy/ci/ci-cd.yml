@@ -1,0 +1,312 @@
+# CyberSOAR — CI/CD Pipeline
+# Triggers: push to main/release-*, PR to main, tag v*
+# Stages: lint → typecheck → test → build → SAST → container scan → SBOM → deploy
+name: CI/CD
+
+on:
+  push:
+    branches: [main, 'release-*']
+    tags: ['v*']
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+  packages: write
+  security-events: write
+  id-token: write
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_WEB: ghcr.io/${{ github.repository }}/web
+  IMAGE_BACKEND: ghcr.io/${{ github.repository }}/backend
+
+jobs:
+  # ─────────────────────────────────────────────────────────────────────
+  # Stage 1: Quality gates (lint, typecheck, unit tests)
+  # ─────────────────────────────────────────────────────────────────────
+  quality:
+    name: Lint + Typecheck + Unit Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci --legacy-peer-deps
+
+      - name: ESLint
+        run: npx eslint src/ --max-warnings=0
+
+      - name: TypeScript typecheck
+        run: npx tsc --noEmit
+
+      - name: Unit tests
+        # SECURITY FIX (AUDIT-2 critical finding #5): removed `|| true` —
+        # test failures now block the build. Previously tests were decorative.
+        run: npm test -- --coverage --reporter=spec
+        env:
+          NODE_ENV: test
+          MONGODB_URI: mongodb://localhost:27017/soar-test
+
+      - name: Upload coverage
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage
+          path: coverage/
+          retention-days: 30
+
+  # ─────────────────────────────────────────────────────────────────────
+  # Stage 2: Security scans (SAST, dependency audit, secret scan)
+  # ─────────────────────────────────────────────────────────────────────
+  security:
+    name: Security Scans
+    runs-on: ubuntu-latest
+    needs: quality
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install deps
+        run: npm ci --legacy-peer-deps
+
+      # SAST: Semgrep (multi-language, OWASP-aware rules)
+      # SECURITY FIX (AUDIT-2 critical finding #5): removed `continue-on-error: true` —
+      # SAST findings now block the build. Previously they were advisory.
+      - name: Semgrep SAST
+        uses: returntocorp/semgrep-action@v1
+        with:
+          config: >-
+            p/owasp-top-ten
+            p/javascript
+            p/typescript
+            p/react
+            p/nodejs
+            p/mongodb
+            p/security-audit
+
+      # Dependency audit: npm audit + License check
+      # SECURITY FIX: removed `|| true` — vulnerable deps now block the build.
+      - name: npm audit (high+critical)
+        run: npm audit --audit-level=high --omit=dev
+
+      - name: License compliance check
+        run: npx license-checker --production --failOn="GPL-3.0;AGPL-3.0;Unlicense"
+
+      # Secret scan: TruffleHog (detects committed secrets with verification)
+      # SECURITY FIX: removed `continue-on-error: true` — committed secrets now block.
+      # SUPPLY-CHAIN FIX: pinned to specific tag instead of `@main` (mutable branch).
+      - name: TruffleHog secret scan
+        uses: trufflesecurity/trufflehog@v3.88.0
+        with:
+          path: .
+          extra_args: --only-verified --json
+
+      # CodeQL: GitHub's semantic analysis
+      # SECURITY FIX: removed `continue-on-error: true` on both init and analyze.
+      - name: CodeQL init
+        uses: github/codeql-action/init@v3
+        with:
+          languages: javascript-typescript
+          queries: +security-and-quality
+
+      - name: CodeQL analyze
+        uses: github/codeql-action/analyze@v3
+
+  # ─────────────────────────────────────────────────────────────────────
+  # Stage 3: Build container images
+  # ─────────────────────────────────────────────────────────────────────
+  build:
+    name: Build & Push Images
+    runs-on: ubuntu-latest
+    needs: [quality, security]
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.IMAGE_WEB }}
+          tags: |
+            type=ref,event=branch
+            type=ref,event=pr
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=sha,prefix=sha-
+          labels: |
+            org.opencontainers.image.title=CyberSOAR Web
+            org.opencontainers.image.description=Production SOAR platform
+            org.opencontainers.image.licenses=Apache-2.0
+
+      - name: Build web image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: deploy/docker/Dockerfile
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          build-args: |
+            NEXT_PUBLIC_API_BASE_URL=${{ vars.NEXT_PUBLIC_API_BASE_URL }}
+
+  # ─────────────────────────────────────────────────────────────────────
+  # Stage 4: Container scanning (Trivy)
+  # ─────────────────────────────────────────────────────────────────────
+  scan:
+    name: Container Vulnerability Scan
+    runs-on: ubuntu-latest
+    needs: build
+    timeout-minutes: 10
+    steps:
+      - name: Trivy scan
+        # SUPPLY-CHAIN FIX: pinned to specific tag instead of `@master` (mutable branch).
+        uses: aquasecurity/trivy-action@0.24.0
+        with:
+          image-ref: ${{ env.IMAGE_WEB }}:sha-${{ github.sha }}
+          format: 'sarif'
+          output: 'trivy-results.sarif'
+          severity: 'CRITICAL,HIGH'
+          exit-code: '1'
+          ignore-unfixed: true
+
+      - name: Upload Trivy results to GitHub Security
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: trivy-results.sarif
+
+  # ─────────────────────────────────────────────────────────────────────
+  # Stage 5: Generate SBOM (CycloneDX)
+  # ─────────────────────────────────────────────────────────────────────
+  sbom:
+    name: Generate SBOM
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install deps
+        run: npm ci --legacy-peer-deps
+
+      - name: Generate CycloneDX SBOM
+        run: npx @cyclonedx/cyclonedx-npm --output-format=json --output-file=sbom.json
+
+      - name: Upload SBOM artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: sbom
+          path: sbom.json
+          retention-days: 365
+
+      - name: Upload SBOM to Dependency Graph
+        uses: advanced-security/spdx-dependency-submission-action@v0.1.0
+        with:
+          filePath: sbom.json
+
+  # ─────────────────────────────────────────────────────────────────────
+  # Stage 6: Deploy (only on main / tags)
+  # ─────────────────────────────────────────────────────────────────────
+  deploy-staging:
+    name: Deploy to Staging
+    runs-on: ubuntu-latest
+    needs: [scan, sbom]
+    if: github.ref == 'refs/heads/main'
+    environment:
+      name: staging
+      url: https://staging.soar.example.com
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure kubectl
+        run: |
+          echo "${{ secrets.KUBE_CONFIG_STAGING }}" | base64 -d > kubeconfig
+          chmod 600 kubeconfig
+
+      - name: Deploy to staging
+        run: |
+          export KUBECONFIG=kubeconfig
+          helm upgrade --install cybersoar deploy/helm/cybersoar \
+            --namespace soar --create-namespace \
+            --values deploy/helm/cybersoar/values-staging.yaml \
+            --set web.image.tag=sha-${{ github.sha }} \
+            --wait --timeout 5m
+
+      - name: Smoke test
+        run: |
+          sleep 30
+          curl -f https://staging.soar.example.com/api/health | jq -e '.status == "alive"'
+
+  deploy-production:
+    name: Deploy to Production
+    runs-on: ubuntu-latest
+    needs: [scan, sbom]
+    if: startsWith(github.ref, 'refs/tags/v')
+    environment:
+      name: production
+      url: https://soar.example.com
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure kubectl
+        run: |
+          echo "${{ secrets.KUBE_CONFIG_PROD }}" | base64 -d > kubeconfig
+          chmod 600 kubeconfig
+
+      - name: Deploy to production
+        run: |
+          export KUBECONFIG=kubeconfig
+          helm upgrade --install cybersoar deploy/helm/cybersoar \
+            --namespace soar --create-namespace \
+            --values deploy/helm/cybersoar/values-production.yaml \
+            --set web.image.tag=${{ github.ref_name }} \
+            --wait --timeout 10m
+
+      - name: Post-deploy health check
+        run: |
+          sleep 60
+          for i in {1..5}; do
+            if curl -f https://soar.example.com/api/health | jq -e '.status == "alive"'; then
+              exit 0
+            fi
+            sleep 10
+          done
+          exit 1

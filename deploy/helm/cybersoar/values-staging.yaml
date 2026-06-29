@@ -1,0 +1,43 @@
+# CyberSOAR — Staging environment overrides
+# Smaller replicas, debug-friendly logs, single-node MongoDB.
+
+web:
+  replicas: 2
+  minReplicas: 2
+  maxReplicas: 5
+  logLevel: debug
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+  ingress:
+    host: staging.soar.example.com
+    webhookHost: webhook.staging.soar.example.com
+
+mongodb:
+  architecture: standalone
+  replicaCount: 1
+  persistence:
+    size: 20Gi
+
+redis:
+  architecture: standalone
+  replica:
+    replicaCount: 1
+
+observability:
+  prometheus:
+    retention: 7d
+    storage: 10Gi
+
+# Staging secrets — generate with: openssl rand -hex 32
+secrets:
+  mongodbUri: "mongodb://soar:CHANGE_ME@cybersoar-mongodb.staging.svc:27017/soar"
+  redisUrl: "redis://:CHANGE_ME@cybersoar-redis-master.staging.svc:6379"
+  webhookSecret: "CHANGE_ME_STAGING"
+  encryptionKey: "CHANGE_ME_STAGING"
+  nextauthSecret: "CHANGE_ME_STAGING"
+  jwtSecret: "CHANGE_ME_STAGING"

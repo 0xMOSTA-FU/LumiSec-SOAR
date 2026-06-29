@@ -1,0 +1,81 @@
+# CyberSOAR — NetworkPolicy (Zero Trust)
+# Default deny all ingress + egress; explicit allowlist per service
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: soar-default-deny
+  namespace: soar
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress: []
+  egress: []
+---
+# Allow web pods to talk to mongo + redis + DNS
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: soar-web-egress
+  namespace: soar
+spec:
+  podSelector:
+    matchLabels:
+      app: soar-web
+  policyTypes:
+    - Egress
+  egress:
+    # DNS
+    - to:
+        - namespaceSelector: {}
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    # MongoDB
+    - to:
+        - podSelector:
+            matchLabels:
+              app: mongo
+      ports:
+        - protocol: TCP
+          port: 27017
+    # Redis
+    - to:
+        - podSelector:
+            matchLabels:
+              app: redis
+      ports:
+        - protocol: TCP
+          port: 6379
+    # HTTPS to external APIs (VirusTotal, Slack, etc.)
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: ingress-nginx
+      ports:
+        - protocol: TCP
+          port: 443
+---
+# Allow ingress from nginx to web pods
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: soar-web-ingress
+  namespace: soar
+spec:
+  podSelector:
+    matchLabels:
+      app: soar-web
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: ingress-nginx
+      ports:
+        - protocol: TCP
+          port: 3000

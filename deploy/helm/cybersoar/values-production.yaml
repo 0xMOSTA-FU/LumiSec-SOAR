@@ -1,0 +1,89 @@
+# CyberSOAR — Production environment overrides
+# HA replicas, replica-set MongoDB, replicated Redis, hardened retention.
+
+web:
+  replicas: 5
+  minReplicas: 5
+  maxReplicas: 50
+  logLevel: info
+  resources:
+    requests:
+      cpu: 500m
+      memory: 1Gi
+    limits:
+      cpu: 2000m
+      memory: 2Gi
+  hpa:
+    cpuUtilization: 65
+    memoryUtilization: 75
+    activeExecutionsPerPod: 8
+  probes:
+    readiness:
+      initialDelaySeconds: 5
+      periodSeconds: 5
+    liveness:
+      initialDelaySeconds: 60
+      periodSeconds: 15
+  ingress:
+    host: soar.example.com
+    webhookHost: webhook.soar.example.com
+    annotations:
+      nginx.ingress.kubernetes.io/ssl-redirect: "true"
+      nginx.ingress.kubernetes.io/rate-limit-requests-per-second: "100"
+      nginx.ingress.kubernetes.io/rate-limit-burst: "200"
+      nginx.ingress.kubernetes.io/proxy-body-size: "10m"
+      nginx.ingress.kubernetes.io/proxy-read-timeout: "300"
+      nginx.ingress.kubernetes.io/configuration-snippet: |
+        more_set_headers "X-Content-Type-Options: nosniff";
+        more_set_headers "X-Frame-Options: DENY";
+        more_set_headers "Referrer-Policy: strict-origin-when-cross-origin";
+        more_set_headers "Permissions-Policy: geolocation=(), microphone=(), camera=()";
+
+mongodb:
+  architecture: replicaset
+  replicaCount: 3
+  persistence:
+    size: 200Gi
+    storageClass: "gp3-encrypted"
+  resources:
+    requests:
+      cpu: 1000m
+      memory: 2Gi
+    limits:
+      cpu: 4000m
+      memory: 8Gi
+
+redis:
+  architecture: replication
+  replica:
+    replicaCount: 3
+  persistence:
+    size: 20Gi
+
+observability:
+  prometheus:
+    retention: 90d
+    storage: 100Gi
+  grafana:
+    enabled: true
+
+# Production secrets MUST be supplied via --set or ExternalSecrets+Vault
+# NEVER commit real production secrets to git.
+secrets:
+  mongodbUri: ""
+  redisUrl: ""
+  webhookSecret: ""
+  encryptionKey: ""
+  nextauthSecret: ""
+  jwtSecret: ""
+
+# Affinity — spread across AZs for HA
+affinity:
+  podAntiAffinity:
+    preferredDuringSchedulingIgnoredDuringExecution:
+      - weight: 100
+        podAffinityTerm:
+          labelSelector:
+            matchLabels:
+              app.kubernetes.io/name: cybersoar
+          topologyKey: topology.kubernetes.io/zone

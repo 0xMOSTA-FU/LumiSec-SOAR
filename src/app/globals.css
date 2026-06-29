@@ -1,0 +1,655 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+
+@custom-variant dark (&:is(.dark *));
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+  --color-sidebar-ring: var(--sidebar-ring);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar: var(--sidebar);
+  --color-chart-5: var(--chart-5);
+  --color-chart-4: var(--chart-4);
+  --color-chart-3: var(--chart-3);
+  --color-chart-2: var(--chart-2);
+  --color-chart-1: var(--chart-1);
+  --color-ring: var(--ring);
+  --color-input: var(--input);
+  --color-border: var(--border);
+  --color-destructive: var(--destructive);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-accent: var(--accent);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-muted: var(--muted);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-secondary: var(--secondary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-primary: var(--primary);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-popover: var(--popover);
+  --color-card-foreground: var(--card-foreground);
+  --color-card: var(--card);
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+  --color-emerald: oklch(0.696 0.17 162.48);
+  --color-emerald-foreground: oklch(0.985 0 0);
+  --color-amber: oklch(0.769 0.188 70.08);
+  --color-amber-foreground: oklch(0.205 0 0);
+  --color-rose: oklch(0.645 0.246 16.439);
+  --color-rose-foreground: oklch(0.985 0 0);
+  --color-cyan: oklch(0.696 0.17 200);
+  --color-cyan-foreground: oklch(0.205 0 0);
+}
+
+:root {
+  --radius: 0.625rem;
+  --background: oklch(0.985 0.002 247);
+  --foreground: oklch(0.145 0.005 247);
+  --card: oklch(1 0 0);
+  --card-foreground: oklch(0.145 0.005 247);
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(0.145 0.005 247);
+  --primary: oklch(0.55 0.2 250);
+  --primary-foreground: oklch(0.985 0 0);
+  --secondary: oklch(0.96 0.01 247);
+  --secondary-foreground: oklch(0.25 0.01 247);
+  --muted: oklch(0.96 0.01 247);
+  --muted-foreground: oklch(0.5 0.02 247);
+  --accent: oklch(0.96 0.01 247);
+  --accent-foreground: oklch(0.25 0.01 247);
+  --destructive: oklch(0.577 0.245 27.325);
+  --border: oklch(0.91 0.01 247);
+  --input: oklch(0.91 0.01 247);
+  --ring: oklch(0.55 0.2 250);
+  --chart-1: oklch(0.55 0.2 250);
+  --chart-2: oklch(0.696 0.17 162.48);
+  --chart-3: oklch(0.769 0.188 70.08);
+  --chart-4: oklch(0.627 0.265 303.9);
+  --chart-5: oklch(0.645 0.246 16.439);
+  --sidebar: oklch(0.16 0.02 250);
+  --sidebar-foreground: oklch(0.92 0.01 247);
+  --sidebar-primary: oklch(0.55 0.2 250);
+  --sidebar-primary-foreground: oklch(0.985 0 0);
+  --sidebar-accent: oklch(0.22 0.03 250);
+  --sidebar-accent-foreground: oklch(0.92 0.01 247);
+  --sidebar-border: oklch(1 0 0 / 8%);
+  --sidebar-ring: oklch(0.55 0.2 250);
+}
+
+.dark {
+  /* Brighter dark background for better contrast */
+  --background: oklch(0.16 0.02 250);
+  --foreground: oklch(0.95 0.01 247);
+  --card: oklch(0.21 0.025 250);
+  --card-foreground: oklch(0.95 0.01 247);
+  --popover: oklch(0.21 0.025 250);
+  --popover-foreground: oklch(0.95 0.01 247);
+  --primary: oklch(0.65 0.22 250);
+  --primary-foreground: oklch(0.985 0 0);
+  --secondary: oklch(0.25 0.025 250);
+  --secondary-foreground: oklch(0.95 0.01 247);
+  --muted: oklch(0.25 0.025 250);
+  /* Brighter muted text for AA contrast on dark backgrounds */
+  --muted-foreground: oklch(0.72 0.02 247);
+  --accent: oklch(0.28 0.03 250);
+  --accent-foreground: oklch(0.95 0.01 247);
+  --destructive: oklch(0.704 0.191 22.216);
+  /* Brighter borders for better component visibility on dark */
+  --border: oklch(1 0 0 / 12%);
+  --input: oklch(1 0 0 / 16%);
+  --ring: oklch(0.65 0.22 250);
+  --chart-1: oklch(0.65 0.22 250);
+  --chart-2: oklch(0.7 0.17 162.48);
+  --chart-3: oklch(0.78 0.19 70.08);
+  --chart-4: oklch(0.68 0.26 303.9);
+  --chart-5: oklch(0.7 0.24 16.439);
+  --sidebar: oklch(0.14 0.02 250);
+  --sidebar-foreground: oklch(0.95 0.01 247);
+  --sidebar-primary: oklch(0.65 0.22 250);
+  --sidebar-primary-foreground: oklch(0.985 0 0);
+  --sidebar-accent: oklch(0.24 0.03 250);
+  --sidebar-accent-foreground: oklch(0.95 0.01 247);
+  --sidebar-border: oklch(1 0 0 / 10%);
+  --sidebar-ring: oklch(0.65 0.22 250);
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  body {
+    @apply bg-background text-foreground;
+    font-feature-settings: "cv11", "ss01";
+    -webkit-font-smoothing: antialiased;
+  }
+  /* Better focus visibility for accessibility */
+  *:focus-visible {
+    @apply outline-none ring-2 ring-ring ring-offset-2 ring-offset-background;
+  }
+  /* Remove default button outline but keep focus ring */
+  button:focus:not(:focus-visible) {
+    outline: none;
+  }
+}
+
+/* ============================================================
+   WORKFLOW CANVAS STYLES
+   Cleaner dot-grid background, less visual noise
+   ============================================================ */
+.workflow-canvas {
+  background-image:
+    radial-gradient(circle, var(--border) 1px, transparent 1px);
+  background-size: 24px 24px;
+  background-position: 0 0;
+}
+
+.dark .workflow-canvas {
+  background-image:
+    radial-gradient(circle, oklch(1 0 0 / 0.08) 1px, transparent 1px);
+}
+
+.workflow-node {
+  overflow: hidden;
+  box-sizing: border-box;
+  transition: box-shadow 0.18s ease, border-color 0.18s ease;
+}
+
+.workflow-node:hover {
+  box-shadow:
+    0 0 0 2px var(--primary),
+    0 6px 16px rgba(0, 0, 0, 0.2);
+}
+
+/* Prevent long tokens (URLs, API keys) from breaking card layouts */
+[data-slot="card"],
+[data-slot="card-content"],
+[data-slot="card-header"] {
+  min-width: 0;
+}
+
+.break-anywhere {
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+/* Execution log lines — wrap at word boundaries; break long IDs only when needed */
+.execution-log-line {
+  min-width: 0;
+}
+
+.execution-log-message {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: break-word;
+  word-break: normal;
+  line-height: 1.45;
+}
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: color-mix(in oklch, var(--muted-foreground) 35%, transparent);
+  border-radius: 4px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: color-mix(in oklch, var(--muted-foreground) 60%, transparent);
+  background-clip: padding-box;
+  border: 2px solid transparent;
+}
+
+/* Firefox scrollbar */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in oklch, var(--muted-foreground) 35%, transparent) transparent;
+}
+
+/* ============================================================
+   PULSE ANIMATION for live indicators
+   ============================================================ */
+@keyframes pulse-dot {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.5; transform: scale(0.9); }
+}
+
+.pulse-dot {
+  animation: pulse-dot 2s ease-in-out infinite;
+}
+
+/* ============================================================
+   TABLE ROW HOVER — adds interactivity to data tables
+   ============================================================ */
+[data-table-row] {
+  transition: background-color 0.15s ease;
+}
+
+[data-table-row]:hover {
+  background-color: color-mix(in oklch, var(--accent) 80%, transparent);
+}
+
+/* ============================================================
+   CARD HOVER — subtle lift for interactive cards
+   ============================================================ */
+[data-interactive-card] {
+  transition: transform 0.18s ease, box-shadow 0.18s ease, border-color 0.18s ease;
+}
+
+[data-interactive-card]:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 8px 24px -4px rgba(0, 0, 0, 0.12);
+  border-color: color-mix(in oklch, var(--primary) 35%, var(--border));
+}
+
+/* ============================================================
+   BUTTON FOCUS RING — consistent across all variants
+   ============================================================ */
+button[data-ui-button] {
+  transition: background-color 0.15s ease, color 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease, transform 0.08s ease;
+}
+
+button[data-ui-button]:active:not(:disabled) {
+  transform: scale(0.97);
+}
+
+/* ============================================================
+   KBD ELEMENT — keyboard shortcut styling
+   ============================================================ */
+kbd {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 6px;
+  font-size: 11px;
+  font-family: var(--font-geist-mono), ui-monospace, monospace;
+  background: var(--muted);
+  color: var(--muted-foreground);
+  border: 1px solid var(--border);
+  border-bottom-width: 2px;
+  border-radius: 4px;
+  line-height: 1.4;
+}
+
+/* ============================================================
+   TOOLTIP — visible on hover for icon-only buttons
+   ============================================================ */
+[data-tooltip] {
+  position: relative;
+}
+
+[data-tooltip]:hover::after {
+  content: attr(data-tooltip);
+  position: absolute;
+  bottom: -32px;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 4px 8px;
+  background: var(--popover);
+  color: var(--popover-foreground);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font-size: 11px;
+  white-space: nowrap;
+  z-index: 100;
+  pointer-events: none;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+}
+
+[data-tooltip]:hover::before {
+  content: '';
+  position: absolute;
+  bottom: -6px;
+  left: 50%;
+  transform: translateX(-50%) rotate(45deg);
+  width: 8px;
+  height: 8px;
+  background: var(--popover);
+  border-left: 1px solid var(--border);
+  border-top: 1px solid var(--border);
+  z-index: 100;
+  pointer-events: none;
+}
+
+/* ============================================================
+   LINK / VIEW ALL — consistent interactive styling
+   ============================================================ */
+.view-all-link {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--primary);
+  text-decoration: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  transition: opacity 0.15s ease, gap 0.15s ease;
+  cursor: pointer;
+}
+
+.view-all-link:hover {
+  opacity: 0.85;
+  gap: 6px;
+}
+
+/* ============================================================
+   SEVERITY BADGE — high-contrast, accessible
+   ============================================================ */
+.severity-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  border: 1px solid currentColor;
+}
+
+.severity-badge.critical {
+  color: oklch(0.65 0.25 25);
+  background: oklch(0.65 0.25 25 / 0.12);
+}
+
+.severity-badge.high {
+  color: oklch(0.7 0.19 32);
+  background: oklch(0.7 0.19 32 / 0.12);
+}
+
+.severity-badge.medium {
+  color: oklch(0.75 0.18 75);
+  background: oklch(0.75 0.18 75 / 0.12);
+}
+
+.severity-badge.low {
+  color: oklch(0.62 0.17 162);
+  background: oklch(0.62 0.17 162 / 0.12);
+}
+
+.dark .severity-badge.critical {
+  color: oklch(0.75 0.25 25);
+  background: oklch(0.75 0.25 25 / 0.18);
+}
+
+.dark .severity-badge.high {
+  color: oklch(0.8 0.19 32);
+  background: oklch(0.8 0.19 32 / 0.18);
+}
+
+.dark .severity-badge.medium {
+  color: oklch(0.85 0.18 75);
+  background: oklch(0.85 0.18 75 / 0.18);
+}
+
+.dark .severity-badge.low {
+  color: oklch(0.75 0.17 162);
+  background: oklch(0.75 0.17 162 / 0.18);
+}
+
+/* ============================================================
+   ARTIFACT MONOSPACE — for hashes, IPs, domains
+   ============================================================ */
+.artifact-mono {
+  font-family: var(--font-geist-mono), ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  letter-spacing: -0.02em;
+}
+
+/* ============================================================
+   TIMELINE — vertical line + dot for incident events
+   ============================================================ */
+.timeline-item {
+  position: relative;
+  padding-left: 28px;
+  padding-bottom: 16px;
+}
+
+.timeline-item:not(:last-child)::before {
+  content: '';
+  position: absolute;
+  left: 7px;
+  top: 16px;
+  bottom: 0;
+  width: 2px;
+  background: var(--border);
+}
+
+.timeline-item::after {
+  content: '';
+  position: absolute;
+  left: 2px;
+  top: 4px;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--card);
+  border: 2px solid var(--primary);
+  z-index: 1;
+}
+
+.timeline-item.success::after {
+  border-color: oklch(0.62 0.17 162);
+  background: oklch(0.62 0.17 162 / 0.15);
+}
+
+.timeline-item.error::after {
+  border-color: oklch(0.65 0.25 25);
+  background: oklch(0.65 0.25 25 / 0.15);
+}
+
+.timeline-item.warning::after {
+  border-color: oklch(0.75 0.18 75);
+  background: oklch(0.75 0.18 75 / 0.15);
+}
+
+/* ============================================================
+   SKELETON LOADING
+   ============================================================ */
+@keyframes shimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+
+.skeleton-shimmer {
+  background: linear-gradient(
+    90deg,
+    var(--muted) 0%,
+    color-mix(in oklch, var(--muted) 60%, var(--muted-foreground)) 50%,
+    var(--muted) 100%
+  );
+  background-size: 200% 100%;
+  animation: shimmer 1.5s ease-in-out infinite;
+}
+
+/* ============================================================
+   ANIMATION UTILITIES
+   ============================================================ */
+@keyframes fade-in {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.animate-fade-in {
+  animation: fade-in 0.2s ease-out;
+}
+
+/* ============================================================
+   ZOOM CONTROL — better visual hierarchy
+   ============================================================ */
+.zoom-control {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 4px;
+  background: var(--muted);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+
+.zoom-control button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 4px;
+  color: var(--muted-foreground);
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.zoom-control button:hover {
+  background: var(--accent);
+  color: var(--accent-foreground);
+}
+
+.zoom-control .zoom-value {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--foreground);
+  min-width: 36px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ============================================================
+   BADGE — polished variants for status/severity
+   ============================================================ */
+[data-badge] {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  border-radius: 4px;
+  border: 1px solid transparent;
+  line-height: 1.4;
+  white-space: nowrap;
+}
+
+/* ============================================================
+   INPUT - polished focus state
+   ============================================================ */
+input[type="text"], input[type="password"], input[type="email"], input[type="number"], textarea, select {
+  transition: border-color 0.15s ease, box-shadow 0.15s ease, background-color 0.15s ease;
+}
+
+input:focus, textarea:focus, select:focus {
+  border-color: color-mix(in oklch, var(--primary) 50%, var(--border));
+  box-shadow: 0 0 0 3px color-mix(in oklch, var(--primary) 12%, transparent);
+}
+
+/* ============================================================
+   PROGRESS — gradient bar for a more premium feel
+   ============================================================ */
+[data-progress] > div {
+  background-image: linear-gradient(
+    90deg,
+    color-mix(in oklch, var(--primary) 85%, white 0%) 0%,
+    var(--primary) 50%,
+    color-mix(in oklch, var(--primary) 80%, white 5%) 100%
+  );
+  background-size: 200% 100%;
+  animation: shimmer-bar 2s linear infinite;
+}
+
+@keyframes shimmer-bar {
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+
+/* ============================================================
+   DROPDOWN MENU — smoother entrance
+   ============================================================ */
+[data-radix-popper-content-wrapper] > * {
+  animation: dropdown-in 0.16s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@keyframes dropdown-in {
+  from { opacity: 0; transform: scale(0.96) translateY(-2px); }
+  to { opacity: 1; transform: scale(1) translateY(0); }
+}
+
+/* ============================================================
+   CARD - subtle gradient border on hover for premium feel
+   ============================================================ */
+[data-interactive-card] {
+  position: relative;
+}
+
+[data-interactive-card]::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  padding: 1px;
+  background: linear-gradient(135deg, transparent, color-mix(in oklch, var(--primary) 35%, transparent), transparent);
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.2s ease;
+}
+
+[data-interactive-card]:hover::before {
+  opacity: 1;
+}
+
+/* ============================================================
+   SELECTION - custom text selection color
+   ============================================================ */
+::selection {
+  background: color-mix(in oklch, var(--primary) 25%, transparent);
+  color: var(--foreground);
+}
+
+/* ============================================================
+   SCROLLBAR FIREFOX - already declared but enhance thumb
+   ============================================================ */
+.dark ::-webkit-scrollbar-thumb {
+  background: color-mix(in oklch, var(--muted-foreground) 45%, transparent);
+}
+
+.dark ::-webkit-scrollbar-thumb:hover {
+  background: color-mix(in oklch, var(--muted-foreground) 70%, transparent);
+}
+
+/* ============================================================
+   LOGIN PAGE — mesh gradient + grid
+   ============================================================ */
+.login-mesh {
+  background:
+    radial-gradient(ellipse 80% 60% at 50% -10%, color-mix(in oklch, var(--primary) 22%, transparent), transparent),
+    radial-gradient(ellipse 50% 40% at 100% 50%, color-mix(in oklch, var(--chart-2) 12%, transparent), transparent),
+    radial-gradient(ellipse 40% 50% at 0% 80%, color-mix(in oklch, var(--chart-4) 10%, transparent), transparent),
+    var(--background);
+}
+
+.login-grid {
+  background-image:
+    linear-gradient(color-mix(in oklch, var(--border) 40%, transparent) 1px, transparent 1px),
+    linear-gradient(90deg, color-mix(in oklch, var(--border) 40%, transparent) 1px, transparent 1px);
+  background-size: 48px 48px;
+  mask-image: radial-gradient(ellipse 70% 60% at 50% 50%, black, transparent);
+}

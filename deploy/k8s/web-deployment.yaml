@@ -1,0 +1,147 @@
+# CyberSOAR — Web Deployment
+# 3 replicas, rolling update, resource limits, security context (non-root)
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: soar-web
+  namespace: soar
+  labels:
+    app: soar-web
+    app.kubernetes.io/name: cybersoar
+    app.kubernetes.io/component: web
+spec:
+  replicas: 3
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      app: soar-web
+  template:
+    metadata:
+      labels:
+        app: soar-web
+        app.kubernetes.io/name: cybersoar
+        app.kubernetes.io/component: web
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "3000"
+        prometheus.io/path: "/api/metrics"
+    spec:
+      serviceAccountName: soar-web
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: web
+          image: ghcr.io/cybersoar/web:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 3000
+              name: http
+              protocol: TCP
+          env:
+            - name: NODE_ENV
+              value: production
+            - name: MONGODB_URI
+              valueFrom:
+                secretKeyRef:
+                  name: soar-secrets
+                  key: mongodb-uri
+            - name: REDIS_URL
+              valueFrom:
+                secretKeyRef:
+                  name: soar-secrets
+                  key: redis-url
+            - name: WEBHOOK_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: soar-secrets
+                  key: webhook-secret
+            - name: ENCRYPTION_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: soar-secrets
+                  key: encryption-key
+            - name: NEXTAUTH_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: soar-secrets
+                  key: nextauth-secret
+          resources:
+            requests:
+              cpu: 250m
+              memory: 512Mi
+            limits:
+              cpu: 1000m
+              memory: 1Gi
+          readinessProbe:
+            httpGet:
+              path: /api/health
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /api/health
+              port: http
+            initialDelaySeconds: 30
+            periodSeconds: 30
+            timeoutSeconds: 5
+            failureThreshold: 3
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+            runAsNonRoot: true
+            runAsUser: 10001
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+            - name: next-cache
+              mountPath: /app/.next/cache
+      volumes:
+        - name: tmp
+          emptyDir: {}
+        - name: next-cache
+          emptyDir: {}
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                labelSelector:
+                  matchLabels:
+                    app: soar-web
+                topologyKey: kubernetes.io/hostname
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: soar-web
+  namespace: soar
+spec:
+  type: ClusterIP
+  selector:
+    app: soar-web
+  ports:
+    - port: 80
+      targetPort: 3000
+      protocol: TCP
+      name: http
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: soar-web
+  namespace: soar
+  automountServiceAccountToken: false

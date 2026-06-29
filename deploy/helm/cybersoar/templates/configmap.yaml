@@ -1,0 +1,29 @@
+{{- /*
+# CyberSOAR — ConfigMap (Helm template)
+# Non-secret runtime configuration. Sensitive values go in secrets.yaml.
+*/ -}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Release.Name }}-config
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: cybersoar
+    app.kubernetes.io/instance: {{ .Release.Name }}
+data:
+  NODE_ENV: "production"
+  # SECURITY: Hard-disable dev auth bypass. Even if NODE_ENV is somehow
+  # misconfigured, this env var prevents the auto-superadmin backdoor.
+  # See src/lib/auth.ts (extractAuthContext) for the enforcement logic.
+  SOAR_DISABLE_DEV_AUTH: "1"
+  SOAR_ENABLE_DEV_AUTH: "0"
+  LOG_LEVEL: {{ .Values.web.logLevel | default "info" | quote }}
+  NODE_MAX_RETRIES: "3"
+  NODE_TIMEOUT_MS: "30000"
+  NODE_RETRY_BASE_DELAY_MS: "500"
+  NODE_RETRY_MAX_DELAY_MS: "10000"
+  WEBHOOK_PATH_PREFIX: "/api/webhook"
+  SSRF_ALLOWLIST: {{ .Values.web.ssrfAllowlist | default "" | quote }}
+  AUDIT_RETENTION_DAYS: "365"
+  METRICS_PATH: "/api/metrics"
+  HEALTH_PATH: "/api/health"

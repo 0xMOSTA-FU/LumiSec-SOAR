@@ -1,0 +1,151 @@
+# Default values for CyberSOAR Helm chart
+# Override per-environment in values-{env}.yaml
+
+# -- Global image registry + pull secrets
+global:
+  imageRegistry: ""
+  imagePullSecrets: []
+
+# -- Web app (Next.js) deployment
+web:
+  image:
+    repository: ghcr.io/cybersoar/web
+    tag: "2.0.0"
+    pullPolicy: IfNotPresent
+
+  replicas: 3
+  minReplicas: 3
+  maxReplicas: 20
+
+  resources:
+    requests:
+      cpu: 250m
+      memory: 512Mi
+    limits:
+      cpu: 1000m
+      memory: 1Gi
+
+  # -- Autoscaling thresholds
+  hpa:
+    cpuUtilization: 70
+    memoryUtilization: 80
+    activeExecutionsPerPod: 10
+
+  # -- Probe tuning
+  probes:
+    readiness:
+      initialDelaySeconds: 5
+      periodSeconds: 10
+    liveness:
+      initialDelaySeconds: 30
+      periodSeconds: 30
+
+  ingress:
+    enabled: true
+    className: nginx
+    host: soar.example.com
+    webhookHost: webhook.soar.example.com
+    tls:
+      enabled: true
+      secretName: soar-tls
+      webhookSecretName: soar-webhook-tls
+    annotations:
+      nginx.ingress.kubernetes.io/ssl-redirect: "true"
+      nginx.ingress.kubernetes.io/rate-limit-requests-per-second: "50"
+      nginx.ingress.kubernetes.io/rate-limit-burst: "100"
+
+  networkPolicy:
+    enabled: true
+
+  podDisruptionBudget:
+    enabled: true
+    minAvailable: 2
+
+  # -- Security context (non-root, read-only fs)
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 10001
+    runAsGroup: 10001
+    fsGroup: 10001
+    readOnlyRootFilesystem: true
+
+# -- Backend service (Node.js + Express)
+backend:
+  enabled: true
+  image:
+    repository: ghcr.io/cybersoar/backend
+    tag: "2.0.0"
+    pullPolicy: IfNotPresent
+  replicas: 2
+  resources:
+    requests:
+      cpu: 200m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+
+# -- MongoDB (Bitnami subchart — disabled if you use Atlas/DocumentDB)
+mongodb:
+  enabled: true
+  architecture: replicaset
+  replicaCount: 3
+  auth:
+    enabled: true
+    rootUser: soar_admin
+    rootPassword: "change-me-in-prod"
+    usernames: ["soar"]
+    passwords: ["change-me-in-prod"]
+    databases: ["soar"]
+  persistence:
+    enabled: true
+    size: 50Gi
+    storageClass: "gp3"
+  resources:
+    requests:
+      cpu: 500m
+      memory: 1Gi
+    limits:
+      cpu: 2000m
+      memory: 4Gi
+
+# -- Redis (Bitnami subchart)
+redis:
+  enabled: true
+  architecture: replication
+  replica:
+    replicaCount: 2
+  auth:
+    enabled: true
+    password: "change-me-in-prod"
+  persistence:
+    enabled: true
+    size: 10Gi
+
+# -- Prometheus + Grafana for observability
+observability:
+  prometheus:
+    enabled: true
+    retention: 30d
+    storage: 50Gi
+  grafana:
+    enabled: true
+    adminPassword: "change-me-in-prod"
+    dashboards:
+      soarOverview: true
+      soarNodes: true
+      soarIntegrations: true
+
+# -- Secrets — DO NOT commit real values; use --set or sealed-secrets
+secrets:
+  mongodbUri: ""              # mongodb://soar:***@mongo-mongodb-0.svc:27017/soar?replicaSet=rs0
+  redisUrl: ""                # redis://:***@redis-master.svc:6379
+  webhookSecret: ""           # random 32-byte hex
+  encryptionKey: ""           # 32-byte hex for AES-256-GCM
+  nextauthSecret: ""          # random 32-byte hex
+  jwtSecret: ""               # random 32-byte hex
+
+# -- Pod-level node selector + tolerations
+nodeSelector: {}
+tolerations: []
+affinity: {}

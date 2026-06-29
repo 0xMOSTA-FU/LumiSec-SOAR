@@ -1,0 +1,47 @@
+{{- if .Values.web.ingress.enabled -}}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ .Release.Name }}-web
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: cybersoar
+    app.kubernetes.io/instance: {{ .Release.Name }}
+  annotations:
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    {{- with .Values.web.ingress.annotations }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  ingressClassName: {{ .Values.web.ingress.className }}
+  {{- if .Values.web.ingress.tls.enabled }}
+  tls:
+    - hosts:
+        - {{ .Values.web.ingress.host }}
+      secretName: {{ .Values.web.ingress.tls.secretName }}
+    - hosts:
+        - {{ .Values.web.ingress.webhookHost }}
+      secretName: {{ .Values.web.ingress.tls.webhookSecretName }}
+  {{- end }}
+  rules:
+    - host: {{ .Values.web.ingress.host }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ .Release.Name }}-web
+                port:
+                  number: 80
+    - host: {{ .Values.web.ingress.webhookHost }}
+      http:
+        paths:
+          - path: /api/webhook
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ .Release.Name }}-web
+                port:
+                  number: 80
+{{- end }}

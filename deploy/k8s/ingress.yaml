@@ -1,0 +1,69 @@
+# CyberSOAR — Ingress (NGINX)
+# TLS terminated at ingress; HSTS, rate-limited, OWASP headers
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: soar-web
+  namespace: soar
+  annotations:
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/proxy-body-size: "10m"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "120"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "120"
+    nginx.ingress.kubernetes.io/rate-limit-connections: "20"
+    nginx.ingress.kubernetes.io/rate-limit-requests-per-second: "50"
+    nginx.ingress.kubernetes.io/rate-limit-burst: "100"
+    nginx.ingress.kubernetes.io/configuration-snippet: |
+      more_set_headers "X-Frame-Options: DENY";
+      more_set_headers "X-Content-Type-Options: nosniff";
+      more_set_headers "X-XSS-Protection: 1; mode=block";
+      more_set_headers "Referrer-Policy: strict-origin-when-cross-origin";
+      more_set_headers "Permissions-Policy: geolocation=(), microphone=(), camera=()";
+      more_set_headers "Strict-Transport-Security: max-age=31536000; includeSubDomains; preload";
+      more_set_headers "Content-Security-Policy: default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self' data:; connect-src 'self' wss:; frame-ancestors 'none'";
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts:
+        - soar.example.com
+      secretName: soar-tls
+  rules:
+    - host: soar.example.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: soar-web
+                port:
+                  number: 80
+---
+# Webhook ingress — separate host, no rate limit (external systems POST here)
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: soar-webhook
+  namespace: soar
+  annotations:
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/proxy-body-size: "5m"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "60"
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts:
+        - webhook.soar.example.com
+      secretName: soar-webhook-tls
+  rules:
+    - host: webhook.soar.example.com
+      http:
+        paths:
+          - path: /api/webhook
+            pathType: Prefix
+            backend:
+              service:
+                name: soar-web
+                port:
+                  number: 80

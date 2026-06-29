@@ -1,0 +1,175 @@
+# ============================================================================
+# SOAR Platform — docker-compose for local development & small deployments
+# For production use Kubernetes (see deploy/k8s/)
+# ============================================================================
+
+version: '3.9'
+
+services:
+  # ---- PostgreSQL 16 (production database) ----
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-soar}
+      POSTGRES_USER: ${POSTGRES_USER:-soar}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-change_me_in_prod}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./deploy/postgres/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-soar} -d ${POSTGRES_DB:-soar}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks: [soar-net]
+
+  # ---- Redis 7 (cache, sessions, rate limiter) ----
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: redis-server --appendonly yes --requirepass ${REDIS_PASSWORD:-change_me_in_prod}
+    volumes:
+      - redis_data:/data
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD:-change_me_in_prod}", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    networks: [soar-net]
+
+  # ---- MongoDB (secondary datastore: execution traces, raw alert archive, external sync) ----
+  mongo:
+    image: mongo:7
+    restart: unless-stopped
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: ${MONGO_USER:-soar}
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_PASSWORD:-change_me_in_prod}
+      MONGO_INITDB_DATABASE: ${MONGO_DB:-soar}
+    volumes:
+      - mongo_data:/data/db
+    ports:
+      - "27017:27017"
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks: [soar-net]
+
+  # ---- External SOAR Backend (Node.js + MongoDB) ----
+  # Secondary REST API service providing incidents, assets, threat intel
+  # and SOAR event ingestion. The main Next.js app calls it via
+  # NEXT_PUBLIC_EXTERNAL_API_URL.
+  backend:
+    build:
+      context: ./mini-services/soar-backend
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    depends_on:
+      mongo:
+        condition: service_healthy
+    environment:
+      PORT: 4000
+      MONGODB_URI: mongodb://${MONGO_USER:-soar}:${MONGO_PASSWORD:-change_me_in_prod}@mongo:27017/${MONGO_DB:-soar_backend}?authSource=admin
+      EXTERNAL_API_KEY: ${EXTERNAL_API_KEY:-change_me_in_prod}
+      SOAR_INTERNAL_API_KEY: ${SOAR_INTERNAL_API_KEY:-${EXTERNAL_API_KEY:-change_me_in_prod}}
+      SOAR_WORKFLOW_GATEWAY_URL: http://app:3000
+      LUMISEC_PLATFORM_URL: ${LUMISEC_PLATFORM_URL:-}
+      LUMISEC_INTERNAL_API_KEY: ${LUMISEC_INTERNAL_API_KEY:-}
+      CORS_ORIGIN: http://localhost:${APP_PORT:-3000}
+      RATE_LIMIT_WINDOW_MS: 60000
+      RATE_LIMIT_MAX: 300
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+    ports:
+      - "${BACKEND_PORT:-4000}:4000"
+    networks: [soar-net]
+    security_opt:
+      - no-new-privileges:true
+
+  # ---- SOAR App (Next.js — both web and API) ----
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      backend:
+        condition: service_started
+    environment:
+      # 12-Factor: all config via env vars
+      NODE_ENV: production
+      DATABASE_URL: postgresql://${POSTGRES_USER:-soar}:${POSTGRES_PASSWORD:-change_me_in_prod}@postgres:5432/${POSTGRES_DB:-soar}?schema=public
+      REDIS_URL: redis://:${REDIS_PASSWORD:-change_me_in_prod}@redis:6379
+      MONGODB_URI: mongodb://${MONGO_USER:-soar}:${MONGO_PASSWORD:-change_me_in_prod}@mongo:27017/${MONGO_DB:-soar}?authSource=admin
+      MONGODB_DB: ${MONGO_DB:-soar}
+      NEXT_PUBLIC_SOAR_GATEWAY: ${NEXT_PUBLIC_SOAR_GATEWAY:-1}
+      NEXT_PUBLIC_EXTERNAL_API_URL: http://backend:4000
+      EXTERNAL_API_KEY: ${EXTERNAL_API_KEY:-change_me_in_prod}
+      SOAR_INTERNAL_API_KEY: ${SOAR_INTERNAL_API_KEY:-${EXTERNAL_API_KEY:-change_me_in_prod}}
+      SOAR_USE_NODE_BACKEND: ${SOAR_USE_NODE_BACKEND:-0}
+      SOAR_BACKEND_URL: http://backend:4000
+      SOAR_WORKFLOW_GATEWAY_URL: http://app:3000
+      LUMISEC_PLATFORM_URL: ${LUMISEC_PLATFORM_URL:-}
+      LUMISEC_INTERNAL_API_KEY: ${LUMISEC_INTERNAL_API_KEY:-}
+      SOAR_DISABLE_DEV_AUTH: ${SOAR_DISABLE_DEV_AUTH:-1}
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY:?ENCRYPTION_KEY required}
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET required}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      ELASTIC_POLL_MINUTES: ${ELASTIC_POLL_MINUTES:-5}
+      SSRF_ALLOWLIST: ${SSRF_ALLOWLIST:-}
+      NODE_MAX_RETRIES: ${NODE_MAX_RETRIES:-3}
+      NODE_TIMEOUT_MS: ${NODE_TIMEOUT_MS:-30000}
+      OIDC_ISSUER: ${OIDC_ISSUER:-}
+      OIDC_CLIENT_ID: ${OIDC_CLIENT_ID:-}
+      OIDC_CLIENT_SECRET: ${OIDC_CLIENT_SECRET:-}
+    ports:
+      - "${APP_PORT:-3000}:3000"
+    networks: [soar-net]
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /tmp
+
+  # ---- Worker (runs long-running workflow executions) ----
+  # Same image, different entrypoint. In production split into separate Deployment.
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    command: ["node", "mini-services/soar-worker/index.js"]
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: postgresql://${POSTGRES_USER:-soar}:${POSTGRES_PASSWORD:-change_me_in_prod}@postgres:5432/${POSTGRES_DB:-soar}?schema=public
+      REDIS_URL: redis://:${REDIS_PASSWORD:-change_me_in_prod}@redis:6379
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY:?ENCRYPTION_KEY must be set}
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET must be set}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      WORKER_CONCURRENCY: ${WORKER_CONCURRENCY:-10}
+    networks: [soar-net]
+    security_opt:
+      - no-new-privileges:true
+
+volumes:
+  postgres_data:
+  redis_data:
+  mongo_data:
+
+networks:
+  soar-net:
+    driver: bridge

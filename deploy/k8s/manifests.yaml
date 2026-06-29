@@ -1,0 +1,515 @@
+# SOAR Platform — Namespace
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: soar
+  labels:
+    app.kubernetes.io/name: soar
+    app.kubernetes.io/part-of: soar-platform
+---
+# Service Account
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: soar
+  namespace: soar
+  labels:
+    app.kubernetes.io/name: soar
+automountServiceAccountToken: false
+---
+# ConfigMap — non-secret configuration (12-factor: env vars)
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: soar-config
+  namespace: soar
+data:
+  NODE_ENV: "production"
+  LOG_LEVEL: "info"
+  NODE_MAX_RETRIES: "3"
+  NODE_TIMEOUT_MS: "30000"
+  NODE_RETRY_BASE_DELAY_MS: "500"
+  NODE_RETRY_MAX_DELAY_MS: "10000"
+  DATABASE_URL: "postgresql://soar:$(POSTGRES_PASSWORD)@postgres.soar.svc.cluster.local:5432/soar?schema=public"
+  REDIS_URL: "redis://:$(REDIS_PASSWORD)@redis.soar.svc.cluster.local:6379"
+  # Note: secrets (ENCRYPTION_KEY, JWT_SECRET, OIDC_CLIENT_SECRET, POSTGRES_PASSWORD, REDIS_PASSWORD)
+  # are in the Secret below, not the ConfigMap.
+---
+# Secret — sensitive credentials (in production, sync from Vault via ExternalSecrets)
+apiVersion: v1
+kind: Secret
+metadata:
+  name: soar-secret
+  namespace: soar
+type: Opaque
+stringData:
+  ENCRYPTION_KEY: "REPLACE_WITH_BASE64_32_BYTE_KEY"  # generate: openssl rand -base64 32
+  JWT_SECRET: "REPLACE_WITH_RANDOM_64_CHAR_HEX"      # generate: openssl rand -hex 32
+  POSTGRES_PASSWORD: "REPLACE_WITH_STRONG_PASSWORD"
+  REDIS_PASSWORD: "REPLACE_WITH_STRONG_PASSWORD"
+  OIDC_CLIENT_SECRET: ""                              # set if SSO enabled
+---
+# API Deployment — 3 replicas, anti-affinity by AZ, distroless, read-only FS
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: soar-api
+  namespace: soar
+  labels:
+    app: soar-api
+spec:
+  replicas: 3
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      app: soar-api
+  template:
+    metadata:
+      labels:
+        app: soar-api
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "3000"
+        prometheus.io/path: "/metrics"
+    spec:
+      serviceAccountName: soar
+      automountServiceAccountToken: false
+      affinity:
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - labelSelector:
+                matchLabels:
+                  app: soar-api
+              topologyKey: topology.kubernetes.io/zone
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: api
+          image: ghcr.io/org/soar-api:latest  # replace with signed digest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 3000
+              protocol: TCP
+          envFrom:
+            - configMapRef:
+                name: soar-config
+            - secretRef:
+                name: soar-secret
+          env:
+            - name: POD_NAME
+              valueFrom: { fieldRef: { fieldPath: metadata.name } }
+            - name: POD_NAMESPACE
+              valueFrom: { fieldRef: { fieldPath: metadata.namespace } }
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            runAsUser: 65532
+            capabilities:
+              drop: [ALL]
+          resources:
+            requests:
+              cpu: 250m
+              memory: 512Mi
+            limits:
+              cpu: 1000m
+              memory: 1Gi
+          livenessProbe:
+            httpGet:
+              path: /api/health
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 30
+            timeoutSeconds: 5
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /api/health?check=ready
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+            - name: next-cache
+              mountPath: /app/.next/cache
+      volumes:
+        - name: tmp
+          emptyDir: {}
+        - name: next-cache
+          emptyDir: {}
+---
+# Worker Deployment — runs workflow executor + BullMQ workers
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: soar-worker
+  namespace: soar
+  labels:
+    app: soar-worker
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: soar-worker
+  template:
+    metadata:
+      labels:
+        app: soar-worker
+    spec:
+      serviceAccountName: soar
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        fsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: worker
+          image: ghcr.io/org/soar-api:latest
+          command: ["node", "mini-services/soar-worker/index.js"]
+          envFrom:
+            - configMapRef:
+                name: soar-config
+            - secretRef:
+                name: soar-secret
+          env:
+            - name: WORKER_CONCURRENCY
+              value: "10"
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          resources:
+            requests:
+              cpu: 500m
+              memory: 1Gi
+            limits:
+              cpu: 2000m
+              memory: 2Gi
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir: {}
+---
+# Service — ClusterIP for internal traffic
+apiVersion: v1
+kind: Service
+metadata:
+  name: soar-api
+  namespace: soar
+  labels:
+    app: soar-api
+spec:
+  type: ClusterIP
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+      protocol: TCP
+  selector:
+    app: soar-api
+---
+# Ingress — TLS termination, HSTS, rate limiting at edge
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: soar-api
+  namespace: soar
+  annotations:
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/proxy-body-size: "10m"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "120"
+    nginx.ingress.kubernetes.io/limit-rps: "100"
+    nginx.ingress.kubernetes.io/limit-connections: "50"
+    nginx.ingress.kubernetes.io/configuration-snippet: |
+      more_set_headers "X-Content-Type-Options: nosniff";
+      more_set_headers "X-Frame-Options: DENY";
+      more_set_headers "X-XSS-Protection: 1; mode=block";
+      more_set_headers "Referrer-Policy: strict-origin-when-cross-origin";
+      more_set_headers "Permissions-Policy: geolocation=(), microphone=(), camera=()";
+      more_set_headers "Strict-Transport-Security: max-age=63072000; includeSubDomains; preload";
+      more_set_headers "Content-Security-Policy: default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; connect-src 'self' https:; font-src 'self' data:;";
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts: [soar.example.com]
+      secretName: soar-tls
+  rules:
+    - host: soar.example.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: soar-api
+                port:
+                  name: http
+---
+# HPA — auto-scale API on CPU + memory
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: soar-api
+  namespace: soar
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: soar-api
+  minReplicas: 3
+  maxReplicas: 20
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70
+    - type: Resource
+      resource:
+        name: memory
+        target:
+          type: Utilization
+          averageUtilization: 80
+  behavior:
+    scaleUp:
+      stabilizationWindowSeconds: 60
+      policies:
+        - type: Percent
+          value: 100
+          periodSeconds: 60
+    scaleDown:
+      stabilizationWindowSeconds: 300
+      policies:
+        - type: Percent
+          value: 50
+          periodSeconds: 60
+---
+# PDB — ensure at least 1 pod stays available during node drains
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: soar-api
+  namespace: soar
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: soar-api
+---
+# NetworkPolicy — deny all ingress by default, allow only from ingress-nginx
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: soar-api
+  namespace: soar
+spec:
+  podSelector:
+    matchLabels:
+      app: soar-api
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: ingress-nginx
+      ports:
+        - protocol: TCP
+          port: 3000
+  egress:
+    # DNS
+    - to: []
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    # PostgreSQL
+    - to:
+        - podSelector:
+            matchLabels:
+              app: postgres
+      ports:
+        - protocol: TCP
+          port: 5432
+    # Redis
+    - to:
+        - podSelector:
+            matchLabels:
+              app: redis
+      ports:
+        - protocol: TCP
+          port: 6379
+    # HTTPS to external APIs (VirusTotal, Slack, etc.)
+    - to: []
+      ports:
+        - protocol: TCP
+          port: 443
+---
+# PostgreSQL StatefulSet — for production use Cloud SQL / RDS / Azure Database
+# This manifest is for self-hosted deployments. Use the Cloud SQL Proxy sidecar
+# for managed PostgreSQL in cloud environments.
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: postgres
+  namespace: soar
+spec:
+  serviceName: postgres
+  replicas: 1
+  selector:
+    matchLabels:
+      app: postgres
+  template:
+    metadata:
+      labels:
+        app: postgres
+    spec:
+      securityContext:
+        fsGroup: 999
+      containers:
+        - name: postgres
+          image: postgres:16-alpine
+          ports:
+            - containerPort: 5432
+          env:
+            - name: POSTGRES_DB
+              value: soar
+            - name: POSTGRES_USER
+              value: soar
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: soar-secret
+                  key: POSTGRES_PASSWORD
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
+          resources:
+            requests:
+              cpu: 500m
+              memory: 1Gi
+            limits:
+              cpu: 2000m
+              memory: 4Gi
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql/data
+          livenessProbe:
+            exec:
+              command: ["pg_isready", "-U", "soar", "-d", "soar"]
+            initialDelaySeconds: 30
+            periodSeconds: 10
+          readinessProbe:
+            exec:
+              command: ["pg_isready", "-U", "soar", "-d", "soar"]
+            initialDelaySeconds: 5
+            periodSeconds: 5
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: [ReadWriteOnce]
+        resources:
+          requests:
+            storage: 50Gi
+        storageClassName: gp3-encrypted
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres
+  namespace: soar
+spec:
+  type: ClusterIP
+  ports:
+    - port: 5432
+  selector:
+    app: postgres
+---
+# Redis StatefulSet — for production use Elasticache / Azure Cache / Memorystore
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: redis
+  namespace: soar
+spec:
+  serviceName: redis
+  replicas: 1
+  selector:
+    matchLabels:
+      app: redis
+  template:
+    metadata:
+      labels:
+        app: redis
+    spec:
+      securityContext:
+        fsGroup: 999
+      containers:
+        - name: redis
+          image: redis:7-alpine
+          command: ["redis-server", "--appendonly", "yes", "--requirepass", "$(REDIS_PASSWORD)"]
+          env:
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: soar-secret
+                  key: REDIS_PASSWORD
+          ports:
+            - containerPort: 6379
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: 500m
+              memory: 1Gi
+          volumeMounts:
+            - name: data
+              mountPath: /data
+          livenessProbe:
+            exec:
+              command: ["redis-cli", "-a", "$(REDIS_PASSWORD)", "ping"]
+            initialDelaySeconds: 10
+            periodSeconds: 10
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: [ReadWriteOnce]
+        resources:
+          requests:
+            storage: 5Gi
+        storageClassName: gp3-encrypted
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis
+  namespace: soar
+spec:
+  type: ClusterIP
+  ports:
+    - port: 6379
+  selector:
+    app: redis

@@ -1,0 +1,60 @@
+# CyberSOAR — HorizontalPodAutoscaler
+# Scales web pods based on CPU + memory + custom metric (active executions)
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: soar-web
+  namespace: soar
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: soar-web
+  minReplicas: 3
+  maxReplicas: 20
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70
+    - type: Resource
+      resource:
+        name: memory
+        target:
+          type: Utilization
+          averageUtilization: 80
+    # Custom metric from Prometheus adapter (active workflow executions)
+    - type: Pods
+      pods:
+        metric:
+          name: soar_active_executions
+        target:
+          type: AverageValue
+          averageValue: "10"
+  behavior:
+    scaleUp:
+      stabilizationWindowSeconds: 30
+      policies:
+        - type: Percent
+          value: 100
+          periodSeconds: 30
+    scaleDown:
+      stabilizationWindowSeconds: 300
+      policies:
+        - type: Percent
+          value: 50
+          periodSeconds: 60
+---
+# PodDisruptionBudget — ensures 2 pods always available during node drains
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: soar-web
+  namespace: soar
+spec:
+  minAvailable: 2
+  selector:
+    matchLabels:
+      app: soar-web
