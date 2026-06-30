@@ -1,0 +1,29 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: soar-elastic-poll
+  namespace: soar
+spec:
+  schedule: "*/5 * * * *"
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          restartPolicy: OnFailure
+          containers:
+            - name: poll
+              image: curlimages/curl:8.5.0
+              envFrom:
+                - secretRef:
+                    name: soar-secrets
+              command:
+                - sh
+                - -c
+                - |
+                  curl -sf -X POST \
+                    -H "Authorization: Bearer ${SOAR_INTERNAL_API_KEY}" \
+                    -H "Content-Type: application/json" \
+                    -d '{"minutes":10,"limit":100}' \
+                    http://soar-web:3000/api/internal/jobs/elastic-poll

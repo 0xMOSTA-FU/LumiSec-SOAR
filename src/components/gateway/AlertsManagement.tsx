@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { Bell, Loader2, RefreshCw } from 'lucide-react';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
+import { Checkbox } from '@/components/ui/checkbox';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Separator } from '@/components/ui/separator';
@@ -41,6 +42,7 @@ import {
   fetchAlerts,
   getAlertIds,
   hasNewAlerts,
+  bulkAlertsAction,
   type SoarAlert,
   type SoarAlertDetail,
 } from '@/lib/lumisec-api/browser/soarAlerts';
@@ -273,6 +275,8 @@ export function AlertsManagement({
   const [newAlertsAvailable, setNewAlertsAvailable] = useState(false);
   const [detailId, setDetailId] = useState<string | null>(null);
   const [detailOpen, setDetailOpen] = useState(false);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [bulkLoading, setBulkLoading] = useState(false);
 
   const knownIdsRef = useRef<Set<string>>(new Set());
   const lastKnownTotalRef = useRef(0);
@@ -340,6 +344,35 @@ export function AlertsManagement({
     setDetailOpen(true);
   };
 
+  const toggleSelect = (id: string, checked: boolean) => {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (checked) next.add(id);
+      else next.delete(id);
+      return next;
+    });
+  };
+
+  const runBulk = async (action: 'escalate' | 'dismiss') => {
+    const ids = [...selected];
+    if (!ids.length) return;
+    setBulkLoading(true);
+    try {
+      const result = await bulkAlertsAction({ ids, action });
+      toast({
+        title: `${result.processed} alert(s) ${action === 'escalate' ? 'escalated' : 'dismissed'}`,
+        description: result.errors.length ? result.errors.slice(0, 3).join('; ') : undefined,
+        variant: result.errors.length ? 'destructive' : 'default',
+      });
+      setSelected(new Set());
+      handleRefresh();
+    } catch (e) {
+      toast({ title: 'Bulk action failed', description: getApiErrorMessage(e), variant: 'destructive' });
+    } finally {
+      setBulkLoading(false);
+    }
+  };
+
   const totalPages = pagination.totalPages ?? 1;
   const canGoBack = pagination.page > 1;
   const canGoForward = pagination.page < totalPages;
@@ -361,6 +394,21 @@ export function AlertsManagement({
           Refresh
         </Button>
       </div>
+
+      {selected.size > 0 && (
+        <div className="flex flex-wrap items-center gap-2 rounded-lg border bg-muted/30 p-3">
+          <span className="text-sm font-medium">{selected.size} selected</span>
+          <Button size="sm" disabled={bulkLoading} onClick={() => runBulk('escalate')}>
+            Escalate to incidents
+          </Button>
+          <Button size="sm" variant="outline" disabled={bulkLoading} onClick={() => runBulk('dismiss')}>
+            Dismiss
+          </Button>
+          <Button size="sm" variant="ghost" onClick={() => setSelected(new Set())}>
+            Clear
+          </Button>
+        </div>
+      )}
 
       {newAlertsAvailable && (
         <Alert className="cursor-pointer border-primary/30 bg-primary/5" onClick={handleRefresh}>
@@ -385,6 +433,15 @@ export function AlertsManagement({
             <Table className="min-w-[720px]">
               <TableHeader>
                 <TableRow>
+                  <TableHead className="w-10">
+                    <Checkbox
+                      checked={alerts.length > 0 && selected.size === alerts.length}
+                      onCheckedChange={(v) => {
+                        if (v) setSelected(new Set(alerts.map((a) => a.id)));
+                        else setSelected(new Set());
+                      }}
+                    />
+                  </TableHead>
                   <TableHead>ID</TableHead>
                   <TableHead>Title</TableHead>
                   <TableHead>Severity</TableHead>
@@ -396,7 +453,7 @@ export function AlertsManagement({
               <TableBody>
                 {alerts.length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={6} className="text-center text-muted-foreground py-12 max-w-lg mx-auto">
+                    <TableCell colSpan={7} className="text-center text-muted-foreground py-12 max-w-lg mx-auto">
                       <p className="font-medium text-foreground mb-1">No alerts ingested yet</p>
                       <p className="text-sm">
                         Alerts appear when SIEM, webhooks, or connected tools send events to SOAR — not from demo data.
@@ -411,6 +468,12 @@ export function AlertsManagement({
                       className="cursor-pointer hover:bg-muted/50"
                       onClick={() => openDetail(alert.id)}
                     >
+                      <TableCell onClick={(e) => e.stopPropagation()}>
+                        <Checkbox
+                          checked={selected.has(alert.id)}
+                          onCheckedChange={(v) => toggleSelect(alert.id, v === true)}
+                        />
+                      </TableCell>
                       <TableCell className="font-mono text-xs max-w-[120px] truncate">
                         {alert.id}
                       </TableCell>

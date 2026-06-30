@@ -10,6 +10,7 @@ cp .env.example .env
 
 npm ci --legacy-peer-deps
 npm run db:push
+npm run db:bootstrap   # admin user + RBAC (no demo data)
 npm run dev
 ```
 

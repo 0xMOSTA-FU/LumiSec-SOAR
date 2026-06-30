@@ -469,3 +469,17 @@ export async function respondToIncident(
   }
   return { ok: false, message: 'Unexpected response from server', actionId };
 }
+
+export async function bulkIncidentsAction(body: {
+  ids: string[];
+  action: 'close' | 'assign' | 'status';
+  status?: string;
+  assigned_to?: string;
+}): Promise<{ processed: number; errors: string[] }> {
+  const response = await apiClient.post<ApiEnvelope<{ processed: number; errors: string[] }>>(
+    '/api/soar/incidents/bulk',
+    body,
+  );
+  const data = unwrapData(response) as { processed: number; errors: string[] };
+  return { processed: data.processed ?? 0, errors: data.errors ?? [] };
+}

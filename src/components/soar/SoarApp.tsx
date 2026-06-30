@@ -59,7 +59,10 @@ import {
   PlaybookRunDetailView,
   IntegrationsManagement,
   NotificationsPanel,
+  ApprovalsManagement,
+  GlobalSearchPage,
 } from '@/features/soar/gateway';
+import { testConnector } from '@/lib/lumisec-api/browser/soarConnectors';
 import type { SoarNavTarget, SoarNavigate } from '@/lib/soar/mode';
 import {
   GATEWAY_SIDEBAR_SECTIONS,
@@ -86,6 +89,8 @@ function formatPageTitle(page: Page): string {
     artifacts: 'Artifacts',
     'webhook-sources': 'Webhook Sources',
     'playbook-runs': 'Playbook Runs',
+    approvals: 'Approvals',
+    search: 'Search',
     'outbound-actions': 'Outbound Actions',
   };
   return titles[page] ?? page.replaceAll('-', ' ').replace(/\b\w/g, (c) => c.toUpperCase());
@@ -1021,6 +1026,12 @@ export function SoarApp() {
                   <IncidentsList onSelectIncident={(id) => { setGatewayIncidentId(id); setPage('gateway-incident-detail'); }} />
                 )}
 
+                {page === 'approvals' && gatewayMode && <ApprovalsManagement />}
+
+                {page === 'search' && gatewayMode && (
+                  <GlobalSearchPage onNavigate={soarNavigate} />
+                )}
+
                 {page === 'gateway-incident-detail' && gatewayMode && gatewayIncidentId && (
                   <IncidentDetailPage
                     incidentId={gatewayIncidentId}
@@ -1495,10 +1506,14 @@ export function SoarApp() {
                                   onClick={async () => {
                                     try {
                                       setTestingId(int.id);
-                                      const res = await soarFetch<{ ok?: boolean; message?: string }>('/api/integrations/test', { method: 'POST', body: JSON.stringify({ id: int.id }) });
-                                      const data = res.data ?? {};
-                                      toast({ title: data.ok ? 'Connected' : 'Test Failed', description: data.message, variant: data.ok ? 'default' : 'destructive' });
-                                      fetchIntegrations(); fetchDashboard();
+                                      const result = await testConnector(int.id);
+                                      toast({
+                                        title: result.success ? 'Connected' : 'Test Failed',
+                                        description: result.message,
+                                        variant: result.success ? 'default' : 'destructive',
+                                      });
+                                      fetchIntegrations();
+                                      fetchDashboard();
                                     } catch (e) {
                                       toast({ title: 'Test error', description: String(e), variant: 'destructive' });
                                     } finally {

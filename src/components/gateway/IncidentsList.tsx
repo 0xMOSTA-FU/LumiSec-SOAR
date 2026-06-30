@@ -3,6 +3,8 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Filter, Loader2, Plus } from 'lucide-react';
+import { Checkbox } from '@/components/ui/checkbox';
+import { toast } from '@/hooks/use-toast';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import {
@@ -43,6 +45,7 @@ import { getApiErrorMessage } from '@/lib/lumisec-api/browser/api-client';
 import {
   createIncident,
   fetchIncidents,
+  bulkIncidentsAction,
   type IncidentFilters,
   type SoarIncident,
 } from '@/lib/lumisec-api/browser/soarIncidents';
@@ -199,6 +202,8 @@ export function IncidentsList({ onSelectIncident }: { onSelectIncident?: (id: st
   const [appliedFilters, setAppliedFilters] = useState<IncidentFilters>({ ...EMPTY_FILTERS });
 
   const [showCreate, setShowCreate] = useState(false);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [bulkLoading, setBulkLoading] = useState(false);
 
   const loadIncidents = useCallback(
     async (page: number, filters: IncidentFilters) => {
@@ -252,6 +257,26 @@ export function IncidentsList({ onSelectIncident }: { onSelectIncident?: (id: st
     loadIncidents(1, appliedFilters);
   };
 
+  const runBulkClose = async () => {
+    const ids = [...selected];
+    if (!ids.length) return;
+    setBulkLoading(true);
+    try {
+      const result = await bulkIncidentsAction({ ids, action: 'close' });
+      toast({
+        title: `Closed ${result.processed} incident(s)`,
+        description: result.errors.length ? result.errors.slice(0, 3).join('; ') : undefined,
+        variant: result.errors.length ? 'destructive' : 'default',
+      });
+      setSelected(new Set());
+      loadIncidents(pagination.page, appliedFilters);
+    } catch (err) {
+      toast({ title: 'Bulk close failed', description: getApiErrorMessage(err), variant: 'destructive' });
+    } finally {
+      setBulkLoading(false);
+    }
+  };
+
   const totalPages = pagination.totalPages ?? pagination.pages ?? 1;
   const canGoBack = pagination.page > 1;
   const canGoForward = pagination.page < totalPages;
@@ -270,6 +295,18 @@ export function IncidentsList({ onSelectIncident }: { onSelectIncident?: (id: st
           Create Incident
         </Button>
       </div>
+
+      {selected.size > 0 && (
+        <div className="flex flex-wrap items-center gap-2 rounded-lg border bg-muted/30 p-3">
+          <span className="text-sm font-medium">{selected.size} selected</span>
+          <Button size="sm" disabled={bulkLoading} onClick={runBulkClose}>
+            Close incidents
+          </Button>
+          <Button size="sm" variant="ghost" onClick={() => setSelected(new Set())}>
+            Clear
+          </Button>
+        </div>
+      )}
 
       <div className="rounded-lg border bg-card p-4 space-y-3">
         <div className="flex items-center gap-2 text-sm font-medium">
@@ -386,6 +423,15 @@ export function IncidentsList({ onSelectIncident }: { onSelectIncident?: (id: st
             <Table className="min-w-[900px]">
               <TableHeader>
                 <TableRow>
+                  <TableHead className="w-10">
+                    <Checkbox
+                      checked={incidents.length > 0 && selected.size === incidents.length}
+                      onCheckedChange={(v) => {
+                        if (v) setSelected(new Set(incidents.map((i) => i.id)));
+                        else setSelected(new Set());
+                      }}
+                    />
+                  </TableHead>
                   <TableHead>ID</TableHead>
                   <TableHead>Title</TableHead>
                   <TableHead>Severity</TableHead>
@@ -399,7 +445,7 @@ export function IncidentsList({ onSelectIncident }: { onSelectIncident?: (id: st
               <TableBody>
                 {incidents.length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={8} className="text-center text-muted-foreground py-10">
+                    <TableCell colSpan={9} className="text-center text-muted-foreground py-10">
                       No incidents found
                     </TableCell>
                   </TableRow>
@@ -410,6 +456,19 @@ export function IncidentsList({ onSelectIncident }: { onSelectIncident?: (id: st
                       className="cursor-pointer hover:bg-muted/50"
                       onClick={() => openIncident(incident.id)}
                     >
+                      <TableCell onClick={(e) => e.stopPropagation()}>
+                        <Checkbox
+                          checked={selected.has(incident.id)}
+                          onCheckedChange={(v) => {
+                            setSelected((prev) => {
+                              const next = new Set(prev);
+                              if (v) next.add(incident.id);
+                              else next.delete(incident.id);
+                              return next;
+                            });
+                          }}
+                        />
+                      </TableCell>
                       <TableCell className="font-mono text-xs">{incident.id}</TableCell>
                       <TableCell className="font-medium max-w-[240px] truncate">
                         {incident.title}

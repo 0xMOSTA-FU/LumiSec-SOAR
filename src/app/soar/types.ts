@@ -18,7 +18,9 @@ export type Page =
   | 'webhook-sources'
   | 'gateway-incident-detail'
   | 'playbook-runs'
-  | 'playbook-run-detail';
+  | 'playbook-run-detail'
+  | 'approvals'
+  | 'search';
 
 export interface WorkflowNode {
   id: string;

@@ -35,6 +35,10 @@ import {
   respondToIncident,
   runPlaybookOnIncident,
 } from './incidents-service';
+import { escalateAlert, bulkAlertAction } from './alerts-service';
+import { bulkIncidentAction } from './bulk-service';
+import { globalSearch } from './search-service';
+import { listApprovals, approveApproval, rejectApproval } from './approvals-service';
 import { soarOk, soarErr, queryPageLimit, paginated, parseJson } from './envelope';
 import {
   alertToSoar,
@@ -132,6 +136,14 @@ export async function handleSoarRequest(
       const body = await req.json();
       const data = await createIncident(ctx.tenantWhere, body);
       return soarOk(data, 'Incident created', 201);
+    }
+
+    if (a === 'incidents' && b === 'bulk' && method === 'POST') {
+      const ctx = await auth(req, PERMISSIONS.CASE_WRITE);
+      if (ctx instanceof NextResponse) return ctx;
+      const body = await req.json();
+      const result = await bulkIncidentAction(ctx.tenantWhere, body, ctx.userId);
+      return soarOk(result, `Processed ${result.processed} incident(s)`);
     }
 
     if (a === 'incidents' && b && !c && method === 'GET') {
@@ -309,12 +321,33 @@ export async function handleSoarRequest(
       return soarOk(alertToSoar(row), 'Alert created', 201);
     }
 
+    if (a === 'alerts' && b === 'bulk' && method === 'POST') {
+      const ctx = await auth(req, PERMISSIONS.ALERT_WRITE);
+      if (ctx instanceof NextResponse) return ctx;
+      const body = await req.json();
+      const result = await bulkAlertAction(ctx.tenantWhere, body);
+      return soarOk(result, `Processed ${result.processed} alert(s)`);
+    }
+
     if (a === 'alerts' && b && !c && method === 'GET') {
       const ctx = await auth(req, PERMISSIONS.ALERT_READ);
       if (ctx instanceof NextResponse) return ctx;
       const row = await db.alert.findFirst({ where: { id: b, ...ctx.tenantWhere } });
       if (!row) return soarErr('Alert not found', 404);
       return soarOk(alertToSoar(row));
+    }
+
+    if (a === 'alerts' && b && c === 'escalate' && method === 'POST') {
+      const ctx = await auth(req, PERMISSIONS.ALERT_ESCALATE);
+      if (ctx instanceof NextResponse) return ctx;
+      const body = (await req.json().catch(() => ({}))) as Record<string, unknown>;
+      const result = await escalateAlert(b, ctx.tenantWhere, {
+        title: body.title ? String(body.title) : undefined,
+        severity: body.severity ? String(body.severity) : undefined,
+        assigned_to: body.assigned_to ? String(body.assigned_to) : null,
+      });
+      if (!result) return soarErr('Alert not found', 404);
+      return soarOk(result, result.deduplicated ? 'Already escalated' : 'Escalated to incident', 201);
     }
 
     if (a === 'alerts' && b && !c && (method === 'PATCH' || method === 'PUT')) {
@@ -1403,6 +1436,43 @@ export async function handleSoarRequest(
 
     if (a === 'integrations' && b === 'notify' && c === 'telegram' && method === 'POST') {
       return runGovernedIntegrationRoute(req, 'notify_telegram', PERMISSIONS.INTEGRATION_WRITE);
+    }
+
+    // ── SEARCH ────────────────────────────────────────────────
+    if (a === 'search' && !b && method === 'GET') {
+      const ctx = await auth(req, PERMISSIONS.CASE_READ);
+      if (ctx instanceof NextResponse) return ctx;
+      const q = req.nextUrl.searchParams.get('q') || '';
+      const limit = Math.min(Number(req.nextUrl.searchParams.get('limit') || 20), 50);
+      const data = await globalSearch(ctx.tenantWhere, q, limit);
+      return soarOk(data);
+    }
+
+    // ── APPROVALS ─────────────────────────────────────────────
+    if (a === 'approvals' && !b && method === 'GET') {
+      const ctx = await auth(req, PERMISSIONS.APPROVAL_REQUEST);
+      if (ctx instanceof NextResponse) return ctx;
+      const status = req.nextUrl.searchParams.get('status') || 'pending';
+      const approvals = await listApprovals(ctx.tenantWhere, status);
+      return soarOk({ approvals });
+    }
+
+    if (a === 'approvals' && b && c === 'approve' && method === 'POST') {
+      const authed = await requireAuth(req, PERMISSIONS.APPROVAL_APPROVE);
+      if (authed instanceof NextResponse) return authed;
+      const body = (await req.json().catch(() => ({}))) as { comment?: string };
+      const result = await approveApproval(b, authed.ctx, body.comment);
+      if (!result.ok) return soarErr(result.message, result.status || 400);
+      return soarOk(result.data, result.message);
+    }
+
+    if (a === 'approvals' && b && c === 'reject' && method === 'POST') {
+      const authed = await requireAuth(req, PERMISSIONS.APPROVAL_REJECT);
+      if (authed instanceof NextResponse) return authed;
+      const body = (await req.json().catch(() => ({}))) as { comment?: string };
+      const result = await rejectApproval(b, authed.ctx, body.comment);
+      if (!result.ok) return soarErr(result.message, result.status || 400);
+      return soarOk(result.data, result.message);
     }
 
     // ── SYSTEM ────────────────────────────────────────────────

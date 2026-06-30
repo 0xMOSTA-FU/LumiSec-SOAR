@@ -133,3 +133,32 @@ export function getAlertIds(alerts: SoarAlert[]): Set<string> {
 export function hasNewAlerts(currentIds: Set<string>, polled: SoarAlert[]): boolean {
   return polled.some((alert) => alert.id && !currentIds.has(alert.id));
 }
+
+export async function escalateAlert(
+  id: string,
+  body: { title?: string; severity?: string; assigned_to?: string } = {},
+): Promise<{ incident: { id: string }; deduplicated?: boolean }> {
+  const response = await apiClient.post<ApiEnvelope<Record<string, unknown>>>(
+    `/api/soar/alerts/${encodeURIComponent(id)}/escalate`,
+    body,
+  );
+  const data = unwrapData(response) as Record<string, unknown>;
+  const incident = (data.incident || {}) as Record<string, unknown>;
+  return {
+    incident: { id: String(incident.id ?? '') },
+    deduplicated: Boolean(data.deduplicated),
+  };
+}
+
+export async function bulkAlertsAction(body: {
+  ids: string[];
+  action: 'escalate' | 'dismiss' | 'assign';
+  assigned_to?: string;
+}): Promise<{ processed: number; errors: string[] }> {
+  const response = await apiClient.post<ApiEnvelope<{ processed: number; errors: string[] }>>(
+    '/api/soar/alerts/bulk',
+    body,
+  );
+  const data = unwrapData(response) as { processed: number; errors: string[] };
+  return { processed: data.processed ?? 0, errors: data.errors ?? [] };
+}

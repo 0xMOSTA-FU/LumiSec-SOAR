@@ -17,3 +17,5 @@ export { WebhookSourcesManagement } from '@/components/gateway/WebhookSourcesMan
 export { IntegrationsManagement } from '@/components/gateway/IntegrationsManagement';
 export { AnalyticsPage } from '@/components/gateway/AnalyticsPage';
 export { NotificationsPanel } from '@/components/gateway/NotificationsPanel';
+export { ApprovalsManagement } from '@/components/gateway/ApprovalsManagement';
+export { GlobalSearchPage } from '@/components/gateway/GlobalSearchPage';

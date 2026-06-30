@@ -19,6 +19,8 @@ export const GATEWAY_SIDEBAR_SECTIONS: SidebarSectionDef[] = [
       { page: 'dashboard', label: 'Dashboard' },
       { page: 'alerts', label: 'Alerts', badgeKey: 'newAlerts' },
       { page: 'incidents', label: 'Incidents', badgeKey: 'openCases' },
+      { page: 'approvals', label: 'Approvals' },
+      { page: 'search', label: 'Search' },
       { page: 'threat-ops', label: 'Threat Ops' },
     ],
   },
